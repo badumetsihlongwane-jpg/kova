@@ -39,6 +39,7 @@ class UiaBridge:
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._compile_error: str | None = None
+        self._uia_warmed: bool = False
 
     def ensure_compiled(self) -> Path | None:
         if self._exe_path and self._exe_path.exists():
@@ -114,6 +115,8 @@ class UiaBridge:
     async def _request(self, payload: dict[str, Any], timeout: float = 3.0) -> dict[str, Any]:
         async with self._lock:
             was_cold = self._proc is None or self._proc.returncode is not None
+            is_uia_cmd = payload.get("cmd") != "ping"
+            needs_warmup = was_cold or (is_uia_cmd and not self._uia_warmed)
             proc = await self._ensure_daemon()
             if proc is None or proc.stdin is None or proc.stdout is None:
                 return {
@@ -122,7 +125,7 @@ class UiaBridge:
                     "elements": [],
                 }
 
-            effective_timeout = max(timeout, 8.0) if was_cold else timeout
+            effective_timeout = max(timeout, 9.0) if needs_warmup else timeout
             try:
                 line = (json.dumps(payload) + "\n").encode("utf-8")
                 proc.stdin.write(line)
@@ -131,6 +134,8 @@ class UiaBridge:
                 if not raw:
                     await self.close()
                     return {"ok": False, "error": "UIA daemon exited unexpectedly", "elements": []}
+                if is_uia_cmd:
+                    self._uia_warmed = True
                 return json.loads(raw.decode("utf-8", errors="replace"))
             except asyncio.TimeoutError:
                 await self.close()
@@ -143,7 +148,7 @@ class UiaBridge:
         return await self._request({"cmd": "ping"}, timeout=10.0)
 
     async def focused_input(self) -> dict[str, Any]:
-        return await self._request({"cmd": "focused"}, timeout=1.8)
+        return await self._request({"cmd": "focused"}, timeout=4.5)
 
     async def inspect(self, hwnd: int = 0, max_nodes: int = 160, budget_ms: int = 650) -> dict[str, Any]:
         return await self._request(
@@ -175,3 +180,4 @@ class UiaBridge:
             except OSError:
                 pass
             self._proc = None
+            self._uia_warmed = False
