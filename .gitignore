@@ -1,0 +1,29 @@
+# Python / Host Agent
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+host/kova_host/bin/
+*.exe
+
+# Android / Gradle
+android/.gradle/
+android/local.properties
+android/build/
+android/app/build/
+android/.idea/
+android/*.iml
+*.jks
+*.keystore
+!android/gradle/wrapper/gradle-wrapper.jar
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.log
+.kova/

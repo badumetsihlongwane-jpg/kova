@@ -1,0 +1,75 @@
+name: Build Windows Host Agent
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-host:
+    name: Test & Package kova-host.exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies & test tools
+        working-directory: host
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pytest-asyncio pyinstaller
+          pip install -e . --no-deps
+
+      - name: Run Windows host test suite
+        working-directory: host
+        run: pytest -v tests/test_host_live.py
+
+      - name: Pre-compile .NET UI Automation helper
+        working-directory: host
+        run: |
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          $wpf = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF"
+          New-Item -ItemType Directory -Force -Path dist-package | Out-Null
+          & $csc /nologo /optimize+ /target:exe `
+            /out:dist-package\uia_helper.exe `
+            "/r:$wpf\UIAutomationClient.dll" `
+            "/r:$wpf\UIAutomationTypes.dll" `
+            "/r:$wpf\WindowsBase.dll" `
+            "/r:C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Web.Extensions.dll" `
+            kova_host\uia_helper.cs
+
+      - name: Build standalone kova-host.exe with PyInstaller
+        working-directory: host
+        run: |
+          pyinstaller --onefile --name kova-host `
+            --add-data "kova_host\uia_helper.cs;kova_host" `
+            kova_host\main.py
+          Copy-Item dist\kova-host.exe dist-package\kova-host.exe
+          Copy-Item scripts\install.ps1 dist-package\install.ps1
+          Copy-Item scripts\keep-session-alive.ps1 dist-package\keep-session-alive.ps1
+          Compress-Archive -Path dist-package\* -DestinationPath ..\kova-host-windows-x64.zip -Force
+
+      - name: Upload Windows Host Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: kova-host-windows-x64
+          path: kova-host-windows-x64.zip
+          retention-days: 90
+
+      - name: Publish Windows Host ZIP on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: kova-host-windows-x64.zip
