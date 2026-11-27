@@ -545,9 +545,9 @@ class KovaServer:
         state: dict[str, Any] = {
             "mode": "desktop",
             "hwnd": None,
-            "fps": 12,
+            "fps": 24,
             "quality": 76,
-            "format": "webp",
+            "format": "jpeg",
             "max_width": 960,
             "roi": None,
             "paused": False,
@@ -557,18 +557,33 @@ class KovaServer:
         last_blank_warned = False
         last_window_warned: str | None = None
         config_ready = asyncio.Event()
+        wake_event = asyncio.Event()
+        frame_seq = 0
+        acked_frame_seq = 0
+        last_sent_ts = 0.0
+        client_supports_ack = False
 
         async def stream_loop() -> None:
-            nonlocal last_hash, last_blank_warned, last_window_warned
+            nonlocal last_hash, last_blank_warned, last_window_warned, frame_seq, last_sent_ts
             try:
                 await asyncio.wait_for(config_ready.wait(), timeout=0.25)
             except asyncio.TimeoutError:
                 pass
             while not ws.closed:
                 t_start = time.monotonic()
+                wake_event.clear()
                 if state["paused"]:
                     await asyncio.sleep(0.15)
                     continue
+
+                # Zero-bufferbloat backpressure: cap in-flight frames at 2 when client sends frame_ack
+                if client_supports_ack and (frame_seq - acked_frame_seq) >= 2 and (t_start - last_sent_ts) < 0.35:
+                    try:
+                        await asyncio.wait_for(wake_event.wait(), timeout=0.04)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+
                 try:
                     force = state["force_keyframe"]
                     state["force_keyframe"] = False
@@ -604,9 +619,12 @@ class KovaServer:
                         await ws.send_json({"type": "session_warning", "code": "ok", "message": ""})
 
                     if not res.unchanged and res.image_bytes:
+                        frame_seq += 1
+                        res.meta["frame_id"] = frame_seq
                         header = json.dumps(res.meta).encode("utf-8")
                         packet = struct.pack(">I", len(header)) + header + res.image_bytes
                         await ws.send_bytes(packet)
+                        last_sent_ts = time.monotonic()
                 except WindowUnavailableError as werr:
                     # Do NOT flip silently to desktop aspect ratio; notify client cleanly!
                     if last_window_warned != werr.reason and not ws.closed:
@@ -627,7 +645,11 @@ class KovaServer:
 
                 fps = max(1, min(30, int(state["fps"])))
                 elapsed = time.monotonic() - t_start
-                await asyncio.sleep(max(0.01, (1.0 / fps) - elapsed))
+                sleep_for = max(0.004, (1.0 / fps) - elapsed)
+                try:
+                    await asyncio.wait_for(wake_event.wait(), timeout=sleep_for)
+                except asyncio.TimeoutError:
+                    pass
 
         async def notify_focused_input() -> None:
             try:
@@ -657,28 +679,38 @@ class KovaServer:
 
                 etype = ev.get("type")
                 active_hwnd = state["hwnd"] if state["mode"] == "window" else None
-                if etype == "config":
+                if etype == "frame_ack":
+                    client_supports_ack = True
+                    fid = int(ev.get("id", 0))
+                    if fid > acked_frame_seq:
+                        acked_frame_seq = fid
+                    wake_event.set()
+                elif etype == "config":
                     for k in ("mode", "hwnd", "fps", "quality", "format", "max_width", "roi", "paused"):
                         if k in ev:
                             state[k] = ev[k]
                     state["force_keyframe"] = True
                     last_hash = None
                     config_ready.set()
+                    wake_event.set()
                 elif etype == "mouse_move":
                     cx, cy = await asyncio.to_thread(self.input_ctrl.move_abs, int(ev["x"]), int(ev["y"]))
                     if "seq" in ev:
                         await ws.send_json({"type": "cursor_ack", "x": cx, "y": cy, "seq": int(ev["seq"])})
+                    wake_event.set()
                 elif etype == "mouse_rel":
                     cx, cy = await asyncio.to_thread(self.input_ctrl.move_rel, int(ev["dx"]), int(ev["dy"]))
                     await ws.send_json(
                         {"type": "cursor_ack", "x": cx, "y": cy, "seq": int(ev.get("seq", 0))}
                     )
+                    wake_event.set()
                 elif etype == "mouse_button":
                     await asyncio.to_thread(
                         self.input_ctrl.mouse_button,
                         str(ev.get("button", "left")),
                         bool(ev.get("down", True)),
                     )
+                    wake_event.set()
                 elif etype == "pointer_down":
                     cx, cy = await asyncio.to_thread(
                         self.input_ctrl.pointer_down,
@@ -690,6 +722,7 @@ class KovaServer:
                     )
                     if "seq" in ev:
                         await ws.send_json({"type": "cursor_ack", "x": cx, "y": cy, "seq": int(ev["seq"])})
+                    wake_event.set()
                 elif etype == "pointer_up":
                     cx, cy = await asyncio.to_thread(
                         self.input_ctrl.pointer_up,
@@ -700,6 +733,7 @@ class KovaServer:
                     state["force_keyframe"] = True
                     if "seq" in ev:
                         await ws.send_json({"type": "cursor_ack", "x": cx, "y": cy, "seq": int(ev["seq"])})
+                    wake_event.set()
                 elif etype == "mouse_click":
                     cx, cy = await asyncio.to_thread(
                         self.input_ctrl.click,
@@ -713,6 +747,7 @@ class KovaServer:
                     state["force_keyframe"] = True
                     if "seq" in ev:
                         await ws.send_json({"type": "cursor_ack", "x": cx, "y": cy, "seq": int(ev["seq"])})
+                    wake_event.set()
                     if bool(ev.get("check_input", False)) and str(ev.get("button", "left")) == "left":
                         asyncio.create_task(notify_focused_input())
                 elif etype == "scroll":
@@ -726,13 +761,27 @@ class KovaServer:
                         active_hwnd,
                     )
                     state["force_keyframe"] = True
+                    wake_event.set()
                 elif etype == "key":
                     keys = ev.get("keys") or []
                     await asyncio.to_thread(self.input_ctrl.send_key_chord, [str(k) for k in keys])
                     state["force_keyframe"] = True
+                    wake_event.set()
                 elif etype == "text":
                     await asyncio.to_thread(self.input_ctrl.type_unicode, str(ev.get("text", "")))
                     state["force_keyframe"] = True
+                    wake_event.set()
+                elif etype == "ime_patch":
+                    backspaces = max(0, min(64, int(ev.get("backspaces", 0))))
+                    insert_text = str(ev.get("text", ""))
+                    if active_hwnd:
+                        await asyncio.to_thread(self.input_ctrl.ensure_window_foreground, self.windows, active_hwnd)
+                    for _ in range(backspaces):
+                        await asyncio.to_thread(self.input_ctrl.send_key_chord, ["backspace"])
+                    if insert_text:
+                        await asyncio.to_thread(self.input_ctrl.type_unicode, insert_text)
+                    state["force_keyframe"] = True
+                    wake_event.set()
                 elif etype == "ping":
                     await ws.send_json({"type": "pong", "ts": ev.get("ts", time.time())})
         finally:

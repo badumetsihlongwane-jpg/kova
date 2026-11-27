@@ -1,5 +1,6 @@
 package com.kova.workstation.ui.navigation
 
+import android.app.Activity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,14 +33,19 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.kova.workstation.ui.WorkspaceTab
 import com.kova.workstation.ui.WorkstationViewModel
 import com.kova.workstation.ui.connect.ConnectScreen
@@ -58,6 +64,31 @@ import com.kova.workstation.ui.theme.KovaTheme
 @Composable
 fun KovaRoot(viewModel: WorkstationViewModel) {
     val state by viewModel.uiState.collectAsState()
+    val inFullscreen = state.connected &&
+        state.editor == null &&
+        state.activeTab == WorkspaceTab.STAGE &&
+        state.isFullscreen
+
+    // True Android Immersive Fullscreen: hides system status & navigation bars edge-to-edge!
+    val view = LocalView.current
+    DisposableEffect(inFullscreen, view) {
+        val window = (view.context as? Activity)?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        if (controller != null) {
+            if (inFullscreen) {
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {
+            if (inFullscreen && controller != null) {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
 
     KovaTheme(darkTheme = state.preferences.darkTheme) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -92,6 +123,37 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                             onClose = viewModel::closeEditor
                         )
                     }
+                } else if (inFullscreen) {
+                    // 100% phone width × 100% phone height edge-to-edge live Windows Stage!
+                    LensStageScreen(
+                        state = state,
+                        stageFrameFlow = viewModel.stageFrame,
+                        stageCursorFlow = viewModel.stageCursor,
+                        onOpenSwitcher = { viewModel.setWorkspaceSwitcherVisible(true) },
+                        onSwitchAdjacentWindow = viewModel::switchAdjacentWindow,
+                        onSelectSource = viewModel::setStageSource,
+                        onWindowAction = { hwnd, act -> viewModel.windowAction(hwnd, act) },
+                        onModeChange = viewModel::setStageInputMode,
+                        onSetRoi = viewModel::setStageRoi,
+                        onSetFullscreen = viewModel::setFullscreen,
+                        onSetControlsCollapsed = viewModel::setStageControlsCollapsed,
+                        onToggleFillScreen = viewModel::toggleStageFillScreen,
+                        onPointerMoveAbs = viewModel::sendPointerMoveAbs,
+                        onPointerDown = viewModel::sendPointerDown,
+                        onPointerUp = viewModel::sendPointerUp,
+                        onMouseClick = viewModel::sendMouseClick,
+                        onScroll = viewModel::sendScroll,
+                        onToggleDragLock = viewModel::toggleStageDragLock,
+                        onToggleXRay = viewModel::toggleXRayOverlay,
+                        onOpenControls = { viewModel.setSemanticSheetVisible(true) },
+                        onSetLiveKeyboardVisible = viewModel::setLiveKeyboardVisible,
+                        onImePatch = viewModel::sendImePatch,
+                        onDispatchDraft = viewModel::dispatchPromptText,
+                        onDismissFocusedHint = viewModel::dismissFocusedInputHint,
+                        onSendKeys = viewModel::sendKeyChord,
+                        onInvokeUia = viewModel::invokeUiaElement,
+                        onActivateDisplay = viewModel::activateLiveDisplay
+                    )
                 } else {
                     Scaffold(
                         topBar = {
@@ -100,39 +162,47 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                 connected = state.connected,
                                 latencyMs = state.latencyMs,
                                 onSettingsTab = state.activeTab == WorkspaceTab.SETTINGS,
-                                onOpenComposer = { viewModel.setPromptComposerVisible(true) },
+                                onOpenType = {
+                                    if (state.activeTab == WorkspaceTab.STAGE) {
+                                        viewModel.setLiveKeyboardVisible(!state.showLiveKeyboard)
+                                    } else {
+                                        viewModel.setPromptComposerVisible(true)
+                                    }
+                                },
                                 onOpenSettings = { viewModel.selectTab(WorkspaceTab.SETTINGS) }
                             )
                         },
                         bottomBar = {
-                            NavigationBar(
-                                containerColor = MaterialTheme.colorScheme.surface,
-                                tonalElevation = 4.dp
-                            ) {
-                                NavigationBarItem(
-                                    selected = state.activeTab == WorkspaceTab.STAGE,
-                                    onClick = { viewModel.selectTab(WorkspaceTab.STAGE) },
-                                    icon = { Icon(Icons.Rounded.DesktopWindows, null) },
-                                    label = { Text("Stage") }
-                                )
-                                NavigationBarItem(
-                                    selected = state.activeTab == WorkspaceTab.SHELL,
-                                    onClick = { viewModel.selectTab(WorkspaceTab.SHELL) },
-                                    icon = { Icon(Icons.Rounded.Terminal, null) },
-                                    label = { Text("Shell") }
-                                )
-                                NavigationBarItem(
-                                    selected = state.activeTab == WorkspaceTab.FORGE,
-                                    onClick = { viewModel.selectTab(WorkspaceTab.FORGE) },
-                                    icon = { Icon(Icons.Rounded.FolderOpen, null) },
-                                    label = { Text("Forge") }
-                                )
-                                NavigationBarItem(
-                                    selected = state.activeTab == WorkspaceTab.SETTINGS,
-                                    onClick = { viewModel.selectTab(WorkspaceTab.SETTINGS) },
-                                    icon = { Icon(Icons.Rounded.Settings, null) },
-                                    label = { Text("Settings") }
-                                )
+                            if (!state.showLiveKeyboard) {
+                                NavigationBar(
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    tonalElevation = 4.dp
+                                ) {
+                                    NavigationBarItem(
+                                        selected = state.activeTab == WorkspaceTab.STAGE,
+                                        onClick = { viewModel.selectTab(WorkspaceTab.STAGE) },
+                                        icon = { Icon(Icons.Rounded.DesktopWindows, null) },
+                                        label = { Text("Stage") }
+                                    )
+                                    NavigationBarItem(
+                                        selected = state.activeTab == WorkspaceTab.SHELL,
+                                        onClick = { viewModel.selectTab(WorkspaceTab.SHELL) },
+                                        icon = { Icon(Icons.Rounded.Terminal, null) },
+                                        label = { Text("Shell") }
+                                    )
+                                    NavigationBarItem(
+                                        selected = state.activeTab == WorkspaceTab.FORGE,
+                                        onClick = { viewModel.selectTab(WorkspaceTab.FORGE) },
+                                        icon = { Icon(Icons.Rounded.FolderOpen, null) },
+                                        label = { Text("Forge") }
+                                    )
+                                    NavigationBarItem(
+                                        selected = state.activeTab == WorkspaceTab.SETTINGS,
+                                        onClick = { viewModel.selectTab(WorkspaceTab.SETTINGS) },
+                                        icon = { Icon(Icons.Rounded.Settings, null) },
+                                        label = { Text("Settings") }
+                                    )
+                                }
                             }
                         }
                     ) { innerPadding ->
@@ -144,12 +214,17 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                             when (state.activeTab) {
                                 WorkspaceTab.STAGE -> LensStageScreen(
                                     state = state,
+                                    stageFrameFlow = viewModel.stageFrame,
+                                    stageCursorFlow = viewModel.stageCursor,
                                     onOpenSwitcher = { viewModel.setWorkspaceSwitcherVisible(true) },
                                     onSwitchAdjacentWindow = viewModel::switchAdjacentWindow,
                                     onSelectSource = viewModel::setStageSource,
                                     onWindowAction = { hwnd, act -> viewModel.windowAction(hwnd, act) },
                                     onModeChange = viewModel::setStageInputMode,
                                     onSetRoi = viewModel::setStageRoi,
+                                    onSetFullscreen = viewModel::setFullscreen,
+                                    onSetControlsCollapsed = viewModel::setStageControlsCollapsed,
+                                    onToggleFillScreen = viewModel::toggleStageFillScreen,
                                     onPointerMoveAbs = viewModel::sendPointerMoveAbs,
                                     onPointerDown = viewModel::sendPointerDown,
                                     onPointerUp = viewModel::sendPointerUp,
@@ -158,7 +233,9 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                     onToggleDragLock = viewModel::toggleStageDragLock,
                                     onToggleXRay = viewModel::toggleXRayOverlay,
                                     onOpenControls = { viewModel.setSemanticSheetVisible(true) },
-                                    onOpenComposer = { viewModel.setPromptComposerVisible(true) },
+                                    onSetLiveKeyboardVisible = viewModel::setLiveKeyboardVisible,
+                                    onImePatch = viewModel::sendImePatch,
+                                    onDispatchDraft = viewModel::dispatchPromptText,
                                     onDismissFocusedHint = viewModel::dismissFocusedInputHint,
                                     onSendKeys = viewModel::sendKeyChord,
                                     onInvokeUia = viewModel::invokeUiaElement,
@@ -236,7 +313,7 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                     )
                 }
 
-                // Shared Modals: Semantic UI Control Sheet, Smart Prompt Composer, Git Panel
+                // Shared Modals: Semantic UI Control Sheet, Fallback Prompt Composer (non-Stage tabs), Git Panel
                 if (state.showSemanticSheet) {
                     SemanticSheet(
                         uiaData = state.uiaData,
@@ -281,7 +358,7 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .statusBarsPadding()
-                    .padding(top = 50.dp, start = 20.dp, end = 20.dp)
+                    .padding(top = if (inFullscreen) 12.dp else 50.dp, start = 20.dp, end = 20.dp)
             ) {
                 Surface(
                     shape = RoundedCornerShape(24.dp),
@@ -307,7 +384,7 @@ private fun CompactStatusBar(
     connected: Boolean,
     latencyMs: Long?,
     onSettingsTab: Boolean,
-    onOpenComposer: () -> Unit,
+    onOpenType: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     Row(
@@ -315,7 +392,7 @@ private fun CompactStatusBar(
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
             .statusBarsPadding()
-            .height(46.dp)
+            .height(44.dp)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -350,8 +427,8 @@ private fun CompactStatusBar(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onOpenComposer, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Rounded.AutoAwesome, contentDescription = "Send Text / Prompt", tint = KovaPalette.Cyan, modifier = Modifier.size(20.dp))
+            IconButton(onClick = onOpenType, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Rounded.AutoAwesome, contentDescription = "Live Keyboard / Type", tint = KovaPalette.Cyan, modifier = Modifier.size(20.dp))
             }
             if (!onSettingsTab) {
                 IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {

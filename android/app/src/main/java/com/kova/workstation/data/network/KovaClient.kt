@@ -383,6 +383,11 @@ class KovaClient(val profile: WorkstationProfile) {
             .url("${profile.baseWsUrl}/ws/stage?token=${enc(profile.token)}")
             .build()
         return httpClient.newWebSocket(req, object : WebSocketListener() {
+            private val decodeOpts = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.RGB_565
+                inDither = false
+            }
+
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                 runCatching {
                     val arr = bytes.toByteArray()
@@ -392,8 +397,11 @@ class KovaClient(val profile: WorkstationProfile) {
                     val metaStr = String(arr, 4, hdrLen, Charsets.UTF_8)
                     val meta = json.decodeFromString<StageFrameMeta>(metaStr)
                     val imgOffset = 4 + hdrLen
-                    val bmp = BitmapFactory.decodeByteArray(arr, imgOffset, arr.size - imgOffset)
+                    val bmp = BitmapFactory.decodeByteArray(arr, imgOffset, arr.size - imgOffset, decodeOpts)
                     if (bmp != null) {
+                        if (meta.frameId > 0L) {
+                            webSocket.send("""{"type":"frame_ack","id":${meta.frameId}}""")
+                        }
                         onFrame(StageFrame(bmp, meta))
                     }
                 }

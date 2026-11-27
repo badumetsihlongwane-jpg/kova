@@ -5,6 +5,7 @@ import com.kova.workstation.ui.stage.PointerCurve
 import com.kova.workstation.ui.stage.ScrollAccumulator
 import com.kova.workstation.ui.stage.StageProjection
 import com.kova.workstation.ui.stage.TrackpadEngine
+import com.kova.workstation.ui.stage.computeLiveImeDiff
 import com.kova.workstation.ui.stage.computePinchPanRoi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -166,6 +167,44 @@ class PointerEngineTest {
 
         val unzoomed = computePinchPanRoi(0.25f, 0.25f, 0.5f, 0.5f, zoomFactor = 0.5f, panNormDx = 0f, panNormDy = 0f, anchorNormX = 0.5f, anchorNormY = 0.5f)
         assertNull(unzoomed)
+    }
+
+    @Test
+    fun stageProjectionFillScreenSpansFullWidthAndHeight() {
+        val proj = StageProjection.compute(
+            boxWidth = 1080f,
+            boxHeight = 2400f,
+            sourceWidth = 720,
+            sourceHeight = 1540,
+            originX = 0,
+            originY = 0,
+            fillScreen = true
+        )
+        assertEquals(1080f, proj.fittedWidth, 0.01f)
+        assertEquals(2400f, proj.fittedHeight, 0.01f)
+        assertEquals(0f, proj.offsetX, 0.01f)
+        assertEquals(0f, proj.offsetY, 0.01f)
+        assertEquals(719 to 1539, proj.viewportToScreen(1080f, 2400f))
+    }
+
+    @Test
+    fun liveImeDiffHandlesTypingAutocorrectSwipeAndBackspaces() {
+        val p1 = computeLiveImeDiff("", "hello")
+        assertEquals(0, p1.backspaces)
+        assertEquals("hello", p1.insertText)
+
+        // Autocorrect replacing tail "wrld" -> "world"
+        val p2 = computeLiveImeDiff("hello wrld", "hello world")
+        assertEquals(3, p2.backspaces)
+        assertEquals("orld", p2.insertText)
+
+        // Pure backspace
+        val p3 = computeLiveImeDiff("hello", "hel")
+        assertEquals(2, p3.backspaces)
+        assertEquals("", p3.insertText)
+
+        // No change
+        assertTrue(computeLiveImeDiff("same", "same").isEmpty)
     }
 
     private fun PointerEngineGain(v: Float, curve: PointerCurve): Float =

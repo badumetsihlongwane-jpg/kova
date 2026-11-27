@@ -6,6 +6,7 @@ import ctypes
 import ctypes.wintypes as wt
 import hashlib
 import io
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -126,6 +127,15 @@ gdi32.GetDIBits.argtypes = [
     wt.UINT,
 ]
 gdi32.GetDIBits.restype = ctypes.c_int
+gdi32.CreateDIBSection.argtypes = [
+    wt.HDC,
+    ctypes.POINTER(BITMAPINFO),
+    wt.UINT,
+    ctypes.POINTER(ctypes.c_void_p),
+    wt.HANDLE,
+    wt.DWORD,
+]
+gdi32.CreateDIBSection.restype = wt.HBITMAP
 
 
 class WindowUnavailableError(RuntimeError):
@@ -196,7 +206,53 @@ def _fast_hash(raw: bytes) -> str:
 
 
 class ScreenCapturer:
-    """Captures full desktop or single window with consistent DWM-aligned coordinates and even dimensions."""
+    """Captures full desktop or single window with reusable DIBSection, exact DWM bounds & fast codecs."""
+
+    def __init__(self) -> None:
+        self._dib_lock = threading.Lock()
+        self._dib_dc: int = 0
+        self._dib_bmp: int = 0
+        self._dib_old: int = 0
+        self._dib_bits: int = 0
+        self._dib_size: tuple[int, int] = (0, 0)
+
+    def _release_dib(self) -> None:
+        if self._dib_dc:
+            if self._dib_old:
+                gdi32.SelectObject(self._dib_dc, self._dib_old)
+            if self._dib_bmp:
+                gdi32.DeleteObject(self._dib_bmp)
+            gdi32.DeleteDC(self._dib_dc)
+        self._dib_dc = 0
+        self._dib_bmp = 0
+        self._dib_old = 0
+        self._dib_bits = 0
+        self._dib_size = (0, 0)
+
+    def _ensure_dib(self, hdc_screen: int, w: int, h: int) -> tuple[int, int]:
+        if self._dib_dc and self._dib_size == (w, h) and self._dib_bits:
+            return self._dib_dc, self._dib_bits
+        self._release_dib()
+        mem_dc = gdi32.CreateCompatibleDC(hdc_screen)
+        bmi = BITMAPINFO()
+        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bmi.bmiHeader.biWidth = w
+        bmi.bmiHeader.biHeight = -h
+        bmi.bmiHeader.biPlanes = 1
+        bmi.bmiHeader.biBitCount = 32
+        bmi.bmiHeader.biCompression = BI_RGB
+        bits_ptr = ctypes.c_void_p()
+        hbmp = gdi32.CreateDIBSection(mem_dc, ctypes.byref(bmi), DIB_RGB_COLORS, ctypes.byref(bits_ptr), None, 0)
+        if not hbmp or not bits_ptr.value:
+            gdi32.DeleteDC(mem_dc)
+            raise RuntimeError("CreateDIBSection failed")
+        old = gdi32.SelectObject(mem_dc, hbmp)
+        self._dib_dc = mem_dc
+        self._dib_bmp = hbmp
+        self._dib_old = old
+        self._dib_bits = int(bits_ptr.value)
+        self._dib_size = (w, h)
+        return mem_dc, self._dib_bits
 
     def capture_desktop_raw(
         self,
@@ -220,25 +276,22 @@ class ScreenCapturer:
         else:
             sx, sy, sw, sh = vx, vy, vw, vh
 
-        hdc_screen = user32.GetDC(0)
-        if not hdc_screen:
-            raise RuntimeError("GetDC(0) failed")
-        mem_dc = gdi32.CreateCompatibleDC(hdc_screen)
-        hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, sw, sh)
-        old = gdi32.SelectObject(mem_dc, hbmp)
-        cursor_pos = None
-        try:
-            ok = gdi32.BitBlt(mem_dc, 0, 0, sw, sh, hdc_screen, sx, sy, SRCCOPY | CAPTUREBLT)
-            if not ok:
-                gdi32.BitBlt(mem_dc, 0, 0, sw, sh, hdc_screen, sx, sy, SRCCOPY)
-            if draw_cursor:
-                cursor_pos = _draw_cursor_on_dc(mem_dc, sx, sy)
-            img, raw = _extract_pil_from_bitmap(mem_dc, hbmp, sw, sh)
-        finally:
-            gdi32.SelectObject(mem_dc, old)
-            gdi32.DeleteObject(hbmp)
-            gdi32.DeleteDC(mem_dc)
-            user32.ReleaseDC(0, hdc_screen)
+        with self._dib_lock:
+            hdc_screen = user32.GetDC(0)
+            if not hdc_screen:
+                raise RuntimeError("GetDC(0) failed")
+            cursor_pos = None
+            try:
+                mem_dc, bits_addr = self._ensure_dib(hdc_screen, sw, sh)
+                ok = gdi32.BitBlt(mem_dc, 0, 0, sw, sh, hdc_screen, sx, sy, SRCCOPY | CAPTUREBLT)
+                if not ok:
+                    gdi32.BitBlt(mem_dc, 0, 0, sw, sh, hdc_screen, sx, sy, SRCCOPY)
+                if draw_cursor:
+                    cursor_pos = _draw_cursor_on_dc(mem_dc, sx, sy)
+                raw = ctypes.string_at(bits_addr, sw * sh * 4)
+                img = Image.frombuffer("RGB", (sw, sh), raw, "raw", "BGRX", 0, 1)
+            finally:
+                user32.ReleaseDC(0, hdc_screen)
 
         meta = {
             "source": "desktop",
@@ -383,13 +436,13 @@ class ScreenCapturer:
         if last_hash and fhash == last_hash:
             return CaptureResult(image_bytes=b"", meta=meta, frame_hash=fhash, unchanged=True, is_blank=blank)
 
-        # Preserve exact source aspect ratio with consistent even output dimensions
+        # Preserve exact source aspect ratio with consistent even output dimensions (fast BILINEAR)
         out_img = img
         if max_width and max_width > 0 and out_img.width > max_width:
             target_w = max(32, int(max_width) & ~1)
             ratio = target_w / float(out_img.width)
             target_h = max(16, int(round(out_img.height * ratio)) & ~1)
-            out_img = out_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            out_img = out_img.resize((target_w, target_h), Image.Resampling.BILINEAR)
 
         buf = io.BytesIO()
         fmt_lower = fmt.lower()
@@ -398,7 +451,7 @@ class ScreenCapturer:
             out_img.save(buf, format="WEBP", quality=q, method=0)
             mime = "image/webp"
         else:
-            out_img.save(buf, format="JPEG", quality=q, optimize=False)
+            out_img.save(buf, format="JPEG", quality=q, optimize=False, subsampling=2)
             mime = "image/jpeg"
 
         encoded = buf.getvalue()

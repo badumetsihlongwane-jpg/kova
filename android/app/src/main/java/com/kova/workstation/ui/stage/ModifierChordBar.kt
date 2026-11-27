@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CenterFocusStrong
 import androidx.compose.material.icons.rounded.DragIndicator
 import androidx.compose.material.icons.rounded.Keyboard
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Mouse
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.ZoomIn
@@ -83,8 +84,9 @@ fun ModifierChordBar(
     onLeftClick: () -> Unit,
     onRightClick: () -> Unit,
     onToggleDragLock: () -> Unit,
-    onOpenComposer: () -> Unit,
+    onOpenKeyboard: () -> Unit,
     onOpenControls: () -> Unit,
+    onCollapse: () -> Unit,
     onSendKeys: (List<String>) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -207,7 +209,7 @@ fun ModifierChordBar(
                     selected = false,
                     onClick = {
                         if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onOpenComposer()
+                        onOpenKeyboard()
                     },
                     modifier = Modifier.weight(0.95f)
                 )
@@ -217,7 +219,7 @@ fun ModifierChordBar(
                     tint = KovaPalette.Amber,
                     selected = false,
                     onClick = onOpenControls,
-                    modifier = Modifier.weight(1.1f)
+                    modifier = Modifier.weight(1.05f)
                 )
                 DockAction(
                     label = "Keys",
@@ -225,8 +227,23 @@ fun ModifierChordBar(
                     tint = if (showKeysDrawer) KovaPalette.Cyan else KovaPalette.InkSecondary,
                     selected = showKeysDrawer,
                     onClick = { showKeysDrawer = !showKeysDrawer },
-                    modifier = Modifier.weight(0.95f)
+                    modifier = Modifier.weight(0.9f)
                 )
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.Transparent,
+                    modifier = Modifier.clickable {
+                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onCollapse()
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "Collapse Controls",
+                        tint = KovaPalette.InkSecondary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp).size(18.dp)
+                    )
+                }
             }
         }
     }

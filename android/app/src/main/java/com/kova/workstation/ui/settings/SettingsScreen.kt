@@ -265,21 +265,36 @@ fun SettingsScreen(
         ) {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Display & Streaming", style = MaterialTheme.typography.titleMedium)
+
+                Text("Stream Codec", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
-                        selected = prefs.streamFps <= 8 && prefs.streamQuality <= 68,
-                        onClick = { onUpdatePrefs { it.copy(streamFps = 8, streamQuality = 65, streamMaxWidth = 720) } },
+                        selected = prefs.streamFormat.equals("jpeg", ignoreCase = true),
+                        onClick = { onUpdatePrefs { it.copy(streamFormat = "jpeg") } },
+                        label = { Text("Fast JPEG (Low Lag)") }
+                    )
+                    FilterChip(
+                        selected = prefs.streamFormat.equals("webp", ignoreCase = true),
+                        onClick = { onUpdatePrefs { it.copy(streamFormat = "webp") } },
+                        label = { Text("WebP (Data Saver)") }
+                    )
+                }
+
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = prefs.streamFps <= 14,
+                        onClick = { onUpdatePrefs { it.copy(streamFps = 12, streamQuality = 65, streamMaxWidth = 720, streamFormat = "webp") } },
                         label = { Text("Cellular Saver") }
                     )
                     FilterChip(
-                        selected = prefs.streamFps in 9..15 && prefs.streamMaxWidth in 840..1080,
-                        onClick = { onUpdatePrefs { it.copy(streamFps = 12, streamQuality = 78, streamMaxWidth = 960) } },
-                        label = { Text("Balanced") }
+                        selected = prefs.streamFps in 15..25,
+                        onClick = { onUpdatePrefs { it.copy(streamFps = 24, streamQuality = 75, streamMaxWidth = 960, streamFormat = "jpeg") } },
+                        label = { Text("Smooth 24 FPS") }
                     )
                     FilterChip(
-                        selected = prefs.streamFps >= 18 || prefs.streamMaxWidth >= 1200,
-                        onClick = { onUpdatePrefs { it.copy(streamFps = 20, streamQuality = 88, streamMaxWidth = 1280) } },
-                        label = { Text("Crisp Wi-Fi") }
+                        selected = prefs.streamFps >= 26,
+                        onClick = { onUpdatePrefs { it.copy(streamFps = 30, streamQuality = 82, streamMaxWidth = 1280, streamFormat = "jpeg") } },
+                        label = { Text("Ultra 30 FPS") }
                     )
                 }
 
@@ -287,11 +302,11 @@ fun SettingsScreen(
                     label = "Target Frame Rate",
                     valueText = "${prefs.streamFps} FPS",
                     value = prefs.streamFps.toFloat(),
-                    range = 4f..24f,
+                    range = 6f..30f,
                     onValueChange = { v -> onUpdatePrefs { it.copy(streamFps = v.roundToInt()) } }
                 )
                 LabeledSlider(
-                    label = "WebP Sharpness",
+                    label = "Image Sharpness",
                     valueText = "${prefs.streamQuality}%",
                     value = prefs.streamQuality.toFloat(),
                     range = 45f..95f,
@@ -303,6 +318,15 @@ fun SettingsScreen(
                     value = prefs.streamMaxWidth.toFloat(),
                     range = 640f..1440f,
                     onValueChange = { v -> onUpdatePrefs { it.copy(streamMaxWidth = ((v / 64f).roundToInt() * 64).coerceIn(640, 1440)) } }
+                )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+
+                ToggleRow(
+                    title = "Fill Entire Phone Screen",
+                    subtitle = "Stretches display edge-to-edge across 100% phone width and height.",
+                    checked = prefs.stageFillScreen,
+                    onCheckedChange = { c -> onUpdatePrefs { it.copy(stageFillScreen = c) } }
                 )
             }
         }

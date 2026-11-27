@@ -93,22 +93,28 @@ data class StageProjection(
             sourceWidth: Int,
             sourceHeight: Int,
             originX: Int,
-            originY: Int
+            originY: Int,
+            fillScreen: Boolean = false
         ): StageProjection {
             val safeBoxW = boxWidth.coerceAtLeast(1f)
             val safeBoxH = boxHeight.coerceAtLeast(1f)
             val safeSrcW = sourceWidth.coerceAtLeast(1)
             val safeSrcH = sourceHeight.coerceAtLeast(1)
-            val srcAspect = safeSrcW.toFloat() / safeSrcH.toFloat()
-            val boxAspect = safeBoxW / safeBoxH
             val fittedW: Float
             val fittedH: Float
-            if (srcAspect > boxAspect) {
+            if (fillScreen) {
                 fittedW = safeBoxW
-                fittedH = safeBoxW / srcAspect
-            } else {
                 fittedH = safeBoxH
-                fittedW = safeBoxH * srcAspect
+            } else {
+                val srcAspect = safeSrcW.toFloat() / safeSrcH.toFloat()
+                val boxAspect = safeBoxW / safeBoxH
+                if (srcAspect > boxAspect) {
+                    fittedW = safeBoxW
+                    fittedH = safeBoxW / srcAspect
+                } else {
+                    fittedH = safeBoxH
+                    fittedW = safeBoxH * srcAspect
+                }
             }
             return StageProjection(
                 boxWidth = safeBoxW,
@@ -354,4 +360,26 @@ fun computePinchPanRoi(
     val nx = (anchorWorldX - anchorNormX * newW - panNormDx * newW).coerceIn(0f, max(0f, 1f - newW))
     val ny = (anchorWorldY - anchorNormY * newH - panNormDy * newH).coerceIn(0f, max(0f, 1f - newH))
     return floatArrayOf(nx, ny, newW, newH)
+}
+
+/**
+ * Atomic live IME diff result for glitch-free Gboard swipe, autocorrect, voice dictation, and backspace.
+ */
+data class LiveImePatch(
+    val backspaces: Int,
+    val insertText: String
+) {
+    val isEmpty: Boolean get() = backspaces == 0 && insertText.isEmpty()
+}
+
+fun computeLiveImeDiff(previous: String, current: String): LiveImePatch {
+    if (previous == current) return LiveImePatch(0, "")
+    val maxCommon = min(previous.length, current.length)
+    var prefix = 0
+    while (prefix < maxCommon && previous[prefix] == current[prefix]) {
+        prefix++
+    }
+    val backspaces = (previous.length - prefix).coerceAtLeast(0)
+    val insert = current.substring(prefix)
+    return LiveImePatch(backspaces = backspaces, insertText = insert)
 }

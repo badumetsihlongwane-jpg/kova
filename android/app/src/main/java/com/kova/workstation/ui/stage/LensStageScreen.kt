@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.CenterFocusStrong
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Restore
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.ZoomOutMap
 import androidx.compose.material3.Button
@@ -56,6 +58,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -82,13 +85,16 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kova.workstation.data.model.StageFrameMeta
 import com.kova.workstation.data.model.UiaElement
+import com.kova.workstation.data.network.StageFrame
 import com.kova.workstation.ui.StageInputMode
 import com.kova.workstation.ui.StageRoi
 import com.kova.workstation.ui.WorkstationUiState
 import com.kova.workstation.ui.theme.KovaPalette
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -111,22 +117,28 @@ private data class TouchRipple(
 )
 
 /**
- * Immersive, aspect-stable Windows Stage with:
- * - Fixed full-bleed viewport (floating glass overlays NEVER resize or distort the remote image!)
- * - Single authoritative StageProjection shared by Canvas rendering, Touch, Reticle, Loupe, & X-Ray
- * - First-class Touch mode (instant tap, wobble-proof double-tap, 1-finger natural scroll,
- *   hold->right-click, hold+drag->native drag, 2-finger pinch/pan crisp ROI zoom, 2-finger right-click)
- * - Precision C¹ Trackpad engine with sub-pixel accumulation, 60Hz coalescing, zero snap-back
+ * Low-latency, edge-to-edge Windows Stage:
+ * - Reads `stageFrameFlow` & `stageCursorFlow` locally so 24-30 FPS video & 60 Hz pointer moves
+ *   NEVER trigger outer Scaffold/NavigationBar recompositions.
+ * - True full-width & full-height fullscreen + optional Fit/Fill scaling.
+ * - Collapsible HUD collapses ALL toolbars into one unobtrusive translucent corner orb.
+ * - Non-blocking `LiveKeyboardBar` sits flush above Gboard with ZERO dark scrim so you can
+ *   always see and interact with Windows while typing!
  */
 @Composable
 fun LensStageScreen(
     state: WorkstationUiState,
+    stageFrameFlow: StateFlow<StageFrame?>,
+    stageCursorFlow: StateFlow<Pair<Int, Int>>,
     onOpenSwitcher: () -> Unit,
     onSwitchAdjacentWindow: (Int) -> Unit,
     onSelectSource: (String, Long?) -> Unit,
     onWindowAction: (Long, String) -> Unit,
     onModeChange: (StageInputMode) -> Unit,
     onSetRoi: (StageRoi?) -> Unit,
+    onSetFullscreen: (Boolean) -> Unit,
+    onSetControlsCollapsed: (Boolean) -> Unit,
+    onToggleFillScreen: () -> Unit,
     onPointerMoveAbs: (Int, Int, Long?) -> Unit,
     onPointerDown: (Int, Int, String) -> Unit,
     onPointerUp: (Int, Int, String) -> Unit,
@@ -135,7 +147,9 @@ fun LensStageScreen(
     onToggleDragLock: () -> Unit,
     onToggleXRay: () -> Unit,
     onOpenControls: () -> Unit,
-    onOpenComposer: () -> Unit,
+    onSetLiveKeyboardVisible: (Boolean) -> Unit,
+    onImePatch: (Int, String) -> Unit,
+    onDispatchDraft: (String, Boolean, String) -> Unit,
     onDismissFocusedHint: () -> Unit,
     onSendKeys: (List<String>) -> Unit,
     onInvokeUia: (UiaElement, String, String) -> Unit,
@@ -145,7 +159,12 @@ fun LensStageScreen(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
-    var zenMode by remember { mutableStateOf(false) }
+    val frame by stageFrameFlow.collectAsState()
+    val cursorPos by stageCursorFlow.collectAsState()
+    val bmp = frame?.bitmap
+    val meta = frame?.meta ?: StageFrameMeta()
+    val cursorX = cursorPos.first
+    val cursorY = cursorPos.second
 
     // Persistent input engines (never reset across frames!)
     val trackpadEngine = remember { TrackpadEngine() }
@@ -165,16 +184,15 @@ fun LensStageScreen(
 
     LaunchedEffect(tapRipple) {
         val r = tapRipple ?: return@LaunchedEffect
-        delay(260)
+        delay(240)
         if (tapRipple?.createdMs == r.createdMs) {
             tapRipple = null
             rippleCleanupTick++
         }
     }
 
-    // Keep trackpad engine synced with host cursor while idle
-    LaunchedEffect(state.cursorX, state.cursorY) {
-        trackpadEngine.syncFromHost(state.cursorX, state.cursorY, force = false)
+    LaunchedEffect(cursorX, cursorY) {
+        trackpadEngine.syncFromHost(cursorX, cursorY, force = false)
     }
 
     val activeWindow = state.windows.firstOrNull { it.hwnd == state.stageHwnd }
@@ -183,6 +201,8 @@ fun LensStageScreen(
         state.stageMode == "window" -> "Focused Window"
         else -> "Full Desktop"
     }
+
+    val controlsVisible = !state.stageControlsCollapsed
 
     // Fixed full-bleed BoxWithConstraints: floating UI overlays NEVER change canvas dimensions!
     BoxWithConstraints(
@@ -193,11 +213,18 @@ fun LensStageScreen(
     ) {
         val boxW = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val boxH = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-        val bmp = state.stageBitmap
-        val meta = state.stageMeta
 
         // Single canonical projection shared across rendering, Touch, Trackpad, Reticle, Loupe, X-Ray
-        val projection = remember(boxW, boxH, meta.sourceWidth, meta.sourceHeight, meta.originX, meta.originY, bmp) {
+        val projection = remember(
+            boxW,
+            boxH,
+            meta.sourceWidth,
+            meta.sourceHeight,
+            meta.originX,
+            meta.originY,
+            bmp,
+            state.preferences.stageFillScreen
+        ) {
             val srcW = if (meta.sourceWidth > 1) meta.sourceWidth else (bmp?.width ?: 1)
             val srcH = if (meta.sourceHeight > 1) meta.sourceHeight else (bmp?.height ?: 1)
             StageProjection.compute(
@@ -206,12 +233,15 @@ fun LensStageScreen(
                 sourceWidth = srcW,
                 sourceHeight = srcH,
                 originX = meta.originX,
-                originY = meta.originY
+                originY = meta.originY,
+                fillScreen = state.preferences.stageFillScreen
             )
         }
 
         // Latest reactive values captured cleanly without EVER restarting pointerInput mid-gesture!
         val latestState by rememberUpdatedState(state)
+        val latestMeta by rememberUpdatedState(meta)
+        val latestCursor by rememberUpdatedState(cursorPos)
         val latestProj by rememberUpdatedState(projection)
         val latestDensity by rememberUpdatedState(density.density.coerceAtLeast(1f))
         val latestOnPointerMoveAbs by rememberUpdatedState(onPointerMoveAbs)
@@ -236,7 +266,7 @@ fun LensStageScreen(
         } else {
             val imageBitmap = remember(bmp) { bmp.asImageBitmap() }
 
-            // Direct aspect-locked Canvas rendering + zero-restart gesture recognizer
+            // Direct aspect-locked/fill Canvas rendering + zero-restart gesture recognizer
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
@@ -248,6 +278,7 @@ fun LensStageScreen(
                             val prefs = st.preferences
                             val d = latestDensity
                             val proj = latestProj
+                            val curCur = latestCursor
 
                             val downTime = System.currentTimeMillis()
                             val startPos = firstDown.position
@@ -260,17 +291,16 @@ fun LensStageScreen(
 
                             scrollAccumulator.reset()
 
-                            // Mode-specific gesture state
                             var touchPhase = TouchPhase.PENDING
-                            var touchStartWin = proj.viewportToScreen(startPos.x, startPos.y)
+                            val touchStartWin = proj.viewportToScreen(startPos.x, startPos.y)
                             var pinchAccum = 1f
                             var multiPanAccum = Offset.Zero
                             var multiAnchorNorm = proj.viewportToNormalized(startPos.x, startPos.y)
                             var holdTimerJob: Job? = null
 
                             if (mode == StageInputMode.TRACKPAD) {
-                                trackpadEngine.syncFromHost(st.cursorX, st.cursorY, force = false)
-                                trackpadEngine.beginGesture(st.cursorX, st.cursorY)
+                                trackpadEngine.syncFromHost(curCur.first, curCur.second, force = false)
+                                trackpadEngine.beginGesture(curCur.first, curCur.second)
                             } else if (mode == StageInputMode.LOUPE) {
                                 loupeActive = true
                                 loupeTouchPx = startPos
@@ -279,7 +309,6 @@ fun LensStageScreen(
                                 loupeNormY = ny
                                 latestOnPointerMoveAbs(touchStartWin.first, touchStartWin.second, null)
                             } else if (mode == StageInputMode.TOUCH) {
-                                // Arm hold timer for Right-Click (lift) or Native Drag (move after hold)
                                 val holdDelay = prefs.longPressMs.coerceIn(240, 750).toLong()
                                 holdTimerJob = scope.launch {
                                     delay(holdDelay)
@@ -307,7 +336,7 @@ fun LensStageScreen(
                                     val nowMs = System.currentTimeMillis()
                                     val curState = latestState
                                     val curPrefs = curState.preferences
-                                    val curMeta = curState.stageMeta
+                                    val curMeta = latestMeta
                                     val curProj = latestProj
 
                                     if (active.size >= 2) {
@@ -329,7 +358,6 @@ fun LensStageScreen(
 
                                         when (mode) {
                                             StageInputMode.TRACKPAD -> {
-                                                // Smooth 2-finger scrolling in Trackpad mode
                                                 val (wx, wy) = scrollAccumulator.accumulate(
                                                     dxDp = panDp.x,
                                                     dyDp = panDp.y,
@@ -345,7 +373,6 @@ fun LensStageScreen(
                                                 multiPanAccum += panPx
                                                 multiAnchorNorm = curProj.viewportToNormalized(centroid.x, centroid.y)
 
-                                                // Live throttled server-side ROI zoom & 2-finger pan
                                                 val hasZoom = abs(pinchAccum - 1f) > 0.08f
                                                 val hasPan = curState.stageRoi != null && multiPanAccum.getDistance() > (12f * d)
                                                 if ((hasZoom || hasPan) && (nowMs - lastRoiSendMs) >= 90L) {
@@ -388,11 +415,9 @@ fun LensStageScreen(
                                                 val distFromStartDp = (c.position - startPos).getDistance() / d
                                                 when (touchPhase) {
                                                     TouchPhase.PENDING -> {
-                                                        // Moved past 10dp BEFORE long-press -> 1-finger natural scroll!
                                                         if (distFromStartDp > 10f) {
                                                             holdTimerJob?.cancel()
                                                             touchPhase = TouchPhase.SCROLLING
-                                                            // Feed initial delta smoothly
                                                             val (wx, wy) = scrollAccumulator.accumulate(
                                                                 dxDp = dxDp,
                                                                 dyDp = dyDp,
@@ -416,7 +441,6 @@ fun LensStageScreen(
                                                         }
                                                     }
                                                     TouchPhase.HOLD_ARMED -> {
-                                                        // Moving > 7dp after hold buzz engages native left-button drag!
                                                         if (distFromStartDp > 7f) {
                                                             touchPhase = TouchPhase.DRAGGING
                                                             holdRingPos = null
@@ -490,7 +514,6 @@ fun LensStageScreen(
                                 holdRingPos = null
                             }
 
-                            // Pointer(s) lifted — finalize cleanly!
                             val curState = latestState
                             val curPrefs = curState.preferences
                             val curProj = latestProj
@@ -505,14 +528,11 @@ fun LensStageScreen(
                                             dragRingPos = null
                                         }
                                         TouchPhase.HOLD_ARMED -> {
-                                            // Stationary hold -> clean Right-Click context menu!
                                             tapRipple = TouchRipple(startPos.x, startPos.y, KovaPalette.Amber)
                                             latestOnMouseClick(touchStartWin.first, touchStartWin.second, "right", 1, false)
                                         }
                                         TouchPhase.PENDING -> {
-                                            // Ignore stray taps in empty black letterbox bars outside the remote frame!
                                             if (curProj.containsViewportPoint(startPos.x, startPos.y, padPx = 8f * d)) {
-                                                // Clean tap (with wobble-proof double-tap pixel snapping!)
                                                 val rawWin = curProj.viewportToScreen(startPos.x, startPos.y)
                                                 val resolved = doubleTapSnapper.resolveTap(
                                                     nowMs = System.currentTimeMillis(),
@@ -529,7 +549,6 @@ fun LensStageScreen(
                                             }
                                         }
                                         TouchPhase.MULTI -> {
-                                            // Quick 2-finger tap -> Right-Click at start midpoint
                                             if (totalDragDp < 18f && abs(pinchAccum - 1f) < 0.10f && elapsed < 340L) {
                                                 tapRipple = TouchRipple(startPos.x, startPos.y, KovaPalette.Violet)
                                                 if (curPrefs.hapticsEnabled) {
@@ -543,7 +562,6 @@ fun LensStageScreen(
                                 }
 
                                 StageInputMode.TRACKPAD -> {
-                                    // Flush any final sub-16ms coalesced position before tap check
                                     if (trackpadPendingFlush) {
                                         latestOnPointerMoveAbs(trackpadLastX, trackpadLastY, trackpadEngine.seq)
                                     }
@@ -572,7 +590,6 @@ fun LensStageScreen(
                         }
                     }
             ) {
-                // 1. Draw the remote Windows frame at exact canonical StageProjection coordinates
                 drawImage(
                     image = imageBitmap,
                     srcOffset = IntOffset.Zero,
@@ -582,16 +599,15 @@ fun LensStageScreen(
                         projection.fittedWidth.roundToInt().coerceAtLeast(1),
                         projection.fittedHeight.roundToInt().coerceAtLeast(1)
                     ),
-                    filterQuality = FilterQuality.Medium
+                    filterQuality = FilterQuality.Low
                 )
 
-                // 2. Crisp Virtual Cursor Reticle (always aligned via StageProjection, zero jitter)
                 if (
                     state.preferences.showCursorReticle &&
                     (state.stageInputMode == StageInputMode.TRACKPAD || state.stageDragLocked) &&
-                    (state.cursorX > 0 || state.cursorY > 0)
+                    (cursorX > 0 || cursorY > 0)
                 ) {
-                    val vp = projection.screenToViewport(state.cursorX, state.cursorY)
+                    val vp = projection.screenToViewport(cursorX, cursorY)
                     if (vp != null) {
                         val c = Offset(vp.first, vp.second)
                         val reticleColor = if (state.stageDragLocked) KovaPalette.Rose else KovaPalette.Cyan
@@ -601,7 +617,6 @@ fun LensStageScreen(
                     }
                 }
 
-                // 3. Touch feedback visuals (Tap ripple, Hold-armed amber ring, Active Drag rose ring)
                 tapRipple?.let { r ->
                     val center = Offset(r.x, r.y)
                     drawCircle(color = r.color.copy(alpha = 0.26f), radius = 22.dp.toPx(), center = center)
@@ -652,7 +667,7 @@ fun LensStageScreen(
                 }
             }
 
-            // Precision 2.5× Magnifying Loupe floating cleanly above user's thumb
+            // Precision 2.5× Magnifying Loupe
             if (loupeActive) {
                 val loupeSizePx = with(density) { 132.dp.toPx() }.roundToInt()
                 val lx = (loupeTouchPx.x - loupeSizePx / 2f).coerceIn(12f, boxW - loupeSizePx - 12f).roundToInt()
@@ -671,21 +686,20 @@ fun LensStageScreen(
             }
         }
 
-        // ---------- Floating Glass Top Workspace Pill (NEVER affects canvas layout size) ----------
+        // ---------- Floating Glass Top Workspace Pill (Collapses cleanly when not needed!) ----------
         androidx.compose.animation.AnimatedVisibility(
-            visible = !zenMode,
+            visible = controlsVisible && !state.showLiveKeyboard,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .padding(horizontal = 10.dp, vertical = if (state.isFullscreen) 14.dp else 8.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                // Active Window Pill with instant Prev/Next arrows + Slide-Over Switcher Trigger
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = KovaPalette.SlateDeep.copy(alpha = 0.86f),
@@ -699,7 +713,7 @@ fun LensStageScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(30.dp)
+                                .size(28.dp)
                                 .clip(CircleShape)
                                 .clickable { onSwitchAdjacentWindow(-1) },
                             contentAlignment = Alignment.Center
@@ -721,7 +735,7 @@ fun LensStageScreen(
                                 tint = KovaPalette.Cyan,
                                 modifier = Modifier.size(15.dp)
                             )
-                            Spacer(Modifier.width(6.dp))
+                            Spacer(Modifier.width(5.dp))
                             Text(
                                 text = sourceLabel,
                                 style = MaterialTheme.typography.labelMedium,
@@ -748,7 +762,7 @@ fun LensStageScreen(
 
                         Box(
                             modifier = Modifier
-                                .size(30.dp)
+                                .size(28.dp)
                                 .clip(CircleShape)
                                 .clickable { onSwitchAdjacentWindow(1) },
                             contentAlignment = Alignment.Center
@@ -758,7 +772,34 @@ fun LensStageScreen(
                     }
                 }
 
-                // Mobile-Fit Reflow toggle when staging a single app window
+                // 1-tap Fit / Fill full-width-height toggle
+                val isFill = state.preferences.stageFillScreen
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (isFill) KovaPalette.Cyan.copy(alpha = 0.22f) else KovaPalette.SlateDeep.copy(alpha = 0.86f),
+                    border = BorderStroke(1.dp, if (isFill) KovaPalette.Cyan else KovaPalette.BorderDark),
+                    modifier = Modifier.clickable { onToggleFillScreen() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.AspectRatio,
+                            "Fit or Fill Screen",
+                            tint = if (isFill) KovaPalette.Cyan else KovaPalette.InkSecondary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            if (isFill) "Fill" else "Fit",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isFill) KovaPalette.Cyan else KovaPalette.InkPrimary
+                        )
+                    }
+                }
+
+                // Mobile-Fit Reflow toggle when staging a single window
                 if (state.stageMode == "window" && state.stageHwnd != null) {
                     val isFit = activeWindow?.mobileFit == true
                     Surface(
@@ -769,27 +810,16 @@ fun LensStageScreen(
                             onWindowAction(state.stageHwnd, if (isFit) "restore_fit" else "mobile_fit")
                         }
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Rounded.PhoneAndroid,
-                                null,
-                                tint = if (isFit) KovaPalette.Emerald else KovaPalette.InkPrimary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                if (isFit) "Fit" else "Reflow",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isFit) KovaPalette.Emerald else KovaPalette.InkPrimary
-                            )
-                        }
+                        Icon(
+                            Icons.Rounded.PhoneAndroid,
+                            "Mobile-Fit Reflow",
+                            tint = if (isFit) KovaPalette.Emerald else KovaPalette.InkPrimary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp).size(15.dp)
+                        )
                     }
                 }
 
-                // 1× Zoom Reset chip (visible whenever ROI zoom is active)
+                // 1× Zoom Reset chip
                 if (state.stageRoi != null) {
                     Surface(
                         shape = RoundedCornerShape(14.dp),
@@ -798,11 +828,11 @@ fun LensStageScreen(
                         modifier = Modifier.clickable { onSetRoi(null) }
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Rounded.ZoomOutMap, null, tint = KovaPalette.Cyan, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(3.dp))
+                            Spacer(Modifier.width(2.dp))
                             Text("1×", style = MaterialTheme.typography.labelSmall, color = KovaPalette.Cyan)
                         }
                     }
@@ -810,65 +840,84 @@ fun LensStageScreen(
 
                 // Semantic X-Ray Toggle
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = CircleShape,
                     color = if (state.stageXRayEnabled) KovaPalette.Amber.copy(alpha = 0.24f) else KovaPalette.SlateDeep.copy(alpha = 0.86f),
                     border = BorderStroke(1.dp, if (state.stageXRayEnabled) KovaPalette.Amber else KovaPalette.BorderDark),
-                    modifier = Modifier.clickable { onToggleXRay() }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Rounded.CenterFocusStrong,
-                            null,
-                            tint = if (state.stageXRayEnabled) KovaPalette.Amber else KovaPalette.InkSecondary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            "X-Ray",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (state.stageXRayEnabled) KovaPalette.Amber else KovaPalette.InkPrimary
-                        )
-                    }
-                }
-
-                // Edge-to-Edge Zen Fullscreen Toggle
-                Surface(
-                    shape = CircleShape,
-                    color = KovaPalette.SlateDeep.copy(alpha = 0.86f),
-                    border = BorderStroke(1.dp, KovaPalette.BorderDark),
                     modifier = Modifier
                         .size(34.dp)
-                        .clickable { zenMode = true }
+                        .clickable { onToggleXRay() }
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Fullscreen, "Hide Controls", tint = KovaPalette.InkSecondary, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Rounded.CenterFocusStrong,
+                            "X-Ray Controls",
+                            tint = if (state.stageXRayEnabled) KovaPalette.Amber else KovaPalette.InkSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                // True Edge-to-Edge Fullscreen Toggle (hides system bars + nav bar + top bar!)
+                Surface(
+                    shape = CircleShape,
+                    color = if (state.isFullscreen) KovaPalette.Cyan.copy(alpha = 0.24f) else KovaPalette.SlateDeep.copy(alpha = 0.86f),
+                    border = BorderStroke(1.dp, if (state.isFullscreen) KovaPalette.Cyan else KovaPalette.BorderDark),
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clickable { onSetFullscreen(!state.isFullscreen) }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (state.isFullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                            if (state.isFullscreen) "Exit Fullscreen" else "True Fullscreen",
+                            tint = if (state.isFullscreen) KovaPalette.Cyan else KovaPalette.InkSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
         }
 
-        // Minimal translucent restore button when in Zen Mode
-        if (zenMode) {
-            Surface(
-                shape = CircleShape,
-                color = KovaPalette.SlateDeep.copy(alpha = 0.72f),
-                border = BorderStroke(1.dp, KovaPalette.BorderDark),
+        // ---------- Ultra-Minimal Corner Pill When Controls Are Collapsed (Zero Screen Clutter!) ----------
+        if (!controlsVisible && !state.showLiveKeyboard) {
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(10.dp)
-                    .size(36.dp)
-                    .clickable { zenMode = false }
+                    .padding(top = if (state.isFullscreen) 14.dp else 8.dp, end = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.FullscreenExit, "Show Controls", tint = KovaPalette.Cyan, modifier = Modifier.size(18.dp))
+                // Quick 1-tap Keyboard orb (always accessible even when collapsed!)
+                Surface(
+                    shape = CircleShape,
+                    color = KovaPalette.SlateDeep.copy(alpha = 0.46f),
+                    border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.55f)),
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clickable { onSetLiveKeyboardVisible(true) }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Keyboard, "Type Live", tint = KovaPalette.Emerald.copy(alpha = 0.9f), modifier = Modifier.size(16.dp))
+                    }
+                }
+
+                // Expand all controls orb
+                Surface(
+                    shape = CircleShape,
+                    color = KovaPalette.SlateDeep.copy(alpha = 0.46f),
+                    border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.55f)),
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clickable { onSetControlsCollapsed(false) }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Tune, "Expand Controls", tint = KovaPalette.Cyan.copy(alpha = 0.9f), modifier = Modifier.size(16.dp))
+                    }
                 }
             }
         }
 
-        // ---------- Window Unavailable Overlay (Minimized / Closed — holds aspect ratio cleanly!) ----------
+        // ---------- Window Unavailable Overlay ----------
         val notice = state.windowStateNotice
         if (notice != null) {
             Card(
@@ -925,114 +974,126 @@ fun LensStageScreen(
             }
         }
 
-        // ---------- Floating Bottom Stack: Quick-Type Pill + Warning + Floating Control Dock ----------
+        // ---------- Floating Bottom Stack: Quick-Type Pill, Warning, Dock OR Non-Blocking LiveKeyboardBar ----------
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Smart Auto-Detected Text-Field Pill (appears when user taps an editable Windows input!)
-            val focusedHint = state.focusedInputHint
-            androidx.compose.animation.AnimatedVisibility(
-                visible = !zenMode && focusedHint != null && focusedHint.editable,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.padding(horizontal = 16.dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(22.dp),
-                    color = KovaPalette.Emerald.copy(alpha = 0.92f),
-                    shadowElevation = 8.dp,
-                    modifier = Modifier.clickable { onOpenComposer() }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(start = 14.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Rounded.Keyboard, null, tint = KovaPalette.Obsidian, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(7.dp))
-                        Text(
-                            text = focusedHint?.name?.takeIf { it.isNotBlank() }
-                                ?.let { "Type into ${it.take(22)}" }
-                                ?: "Tap to type into text field",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = KovaPalette.Obsidian,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(22.dp)
-                                .clip(CircleShape)
-                                .clickable { onDismissFocusedHint() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Rounded.Close, "Dismiss", tint = KovaPalette.Obsidian, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                }
-            }
-
-            // Actionable Blank-Frame Recovery Card
-            if (!state.stageWarning.isNullOrBlank()) {
-                Card(
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp)
-                        .fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = KovaPalette.SlateCard.copy(alpha = 0.96f)),
-                    border = BorderStroke(1.dp, KovaPalette.Amber.copy(alpha = 0.75f))
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(verticalAlignment = Alignment.Top) {
-                            Icon(Icons.Rounded.WarningAmber, null, tint = KovaPalette.Amber, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                text = state.stageWarning,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = KovaPalette.InkPrimary
-                            )
-                        }
-                        Button(
-                            onClick = onActivateDisplay,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = KovaPalette.Amber,
-                                contentColor = KovaPalette.Obsidian
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Activate Live Console Display", fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                }
-            }
-
-            // Floating Glass Action Dock (hidden in Zen Mode, NEVER changes Stage size)
-            androidx.compose.animation.AnimatedVisibility(
-                visible = !zenMode,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                ModifierChordBar(
-                    inputMode = state.stageInputMode,
-                    dragLocked = state.stageDragLocked,
+            if (state.showLiveKeyboard) {
+                // Slim inline bar flush above Gboard — ZERO dark scrim, FULL live Windows visibility!
+                LiveKeyboardBar(
                     hapticsEnabled = state.preferences.hapticsEnabled,
-                    onModeChange = onModeChange,
-                    onLeftClick = { onMouseClick(null, null, "left", 1, true) },
-                    onRightClick = { onMouseClick(null, null, "right", 1, false) },
-                    onToggleDragLock = onToggleDragLock,
-                    onOpenComposer = onOpenComposer,
-                    onOpenControls = onOpenControls,
-                    onSendKeys = onSendKeys
+                    onImePatch = onImePatch,
+                    onSendKeys = onSendKeys,
+                    onDispatchDraft = onDispatchDraft,
+                    onDismiss = { onSetLiveKeyboardVisible(false) }
                 )
+            } else {
+                // Auto-Detected Text-Field Pill (opens slim non-blocking LiveKeyboardBar!)
+                val focusedHint = state.focusedInputHint
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = focusedHint != null && focusedHint.editable,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(22.dp),
+                        color = KovaPalette.Emerald.copy(alpha = 0.92f),
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.clickable { onSetLiveKeyboardVisible(true) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(start = 14.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Keyboard, null, tint = KovaPalette.Obsidian, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text(
+                                text = focusedHint?.name?.takeIf { it.isNotBlank() }
+                                    ?.let { "Type into ${it.take(22)}" }
+                                    ?: "Tap to type live",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = KovaPalette.Obsidian,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .clickable { onDismissFocusedHint() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Close, "Dismiss", tint = KovaPalette.Obsidian, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+                }
+
+                // Actionable Blank-Frame Recovery Card
+                if (!state.stageWarning.isNullOrBlank()) {
+                    Card(
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp)
+                            .fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = KovaPalette.SlateCard.copy(alpha = 0.96f)),
+                        border = BorderStroke(1.dp, KovaPalette.Amber.copy(alpha = 0.75f))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(verticalAlignment = Alignment.Top) {
+                                Icon(Icons.Rounded.WarningAmber, null, tint = KovaPalette.Amber, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    text = state.stageWarning,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = KovaPalette.InkPrimary
+                                )
+                            }
+                            Button(
+                                onClick = onActivateDisplay,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = KovaPalette.Amber,
+                                    contentColor = KovaPalette.Obsidian
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Activate Live Console Display", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+
+                // Collapsible Floating Glass Action Dock
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = controlsVisible,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    ModifierChordBar(
+                        inputMode = state.stageInputMode,
+                        dragLocked = state.stageDragLocked,
+                        hapticsEnabled = state.preferences.hapticsEnabled,
+                        onModeChange = onModeChange,
+                        onLeftClick = { onMouseClick(null, null, "left", 1, true) },
+                        onRightClick = { onMouseClick(null, null, "right", 1, false) },
+                        onToggleDragLock = onToggleDragLock,
+                        onOpenKeyboard = { onSetLiveKeyboardVisible(true) },
+                        onOpenControls = onOpenControls,
+                        onCollapse = { onSetControlsCollapsed(true) },
+                        onSendKeys = onSendKeys
+                    )
+                }
             }
         }
     }

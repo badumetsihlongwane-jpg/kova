@@ -24,9 +24,11 @@ data class WorkstationProfile(
 
 @Serializable
 data class AppPreferences(
-    val streamFps: Int = 12,
-    val streamQuality: Int = 78,
+    val streamFps: Int = 24,
+    val streamQuality: Int = 75,
     val streamMaxWidth: Int = 960,
+    val streamFormat: String = "jpeg",
+    val stageFillScreen: Boolean = false,
     val defaultInputMode: String = "TOUCH",
     val pointerCurve: String = "BALANCED",
     val touchpadSensitivity: Float = 1.35f,
@@ -348,6 +350,7 @@ data class StageFrameMeta(
     @SerialName("cursor_y") val cursorY: Int = 0,
     @SerialName("is_blank") val isBlank: Boolean = false,
     @SerialName("capture_ms") val captureMs: Double = 0.0,
+    @SerialName("frame_id") val frameId: Long = 0L,
     val bytes: Int = 0
 )
 

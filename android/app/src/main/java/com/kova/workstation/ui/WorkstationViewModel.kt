@@ -27,6 +27,7 @@ import com.kova.workstation.data.model.WindowStateNotice
 import com.kova.workstation.data.model.WorkstationProfile
 import com.kova.workstation.data.network.KovaClient
 import com.kova.workstation.data.network.PairingUriParser
+import com.kova.workstation.data.network.StageFrame
 import com.kova.workstation.data.storage.ProfileStore
 import com.kova.workstation.service.WorkstationService
 import com.kova.workstation.ui.terminal.AnsiTerminalBuffer
@@ -102,13 +103,9 @@ data class WorkstationUiState(
     val clipboardHistory: List<ClipboardEntry> = emptyList(),
     val showWorkspaceSwitcher: Boolean = false,
 
-    // Immersive Visual Stage & Semantic UI Automation
+    // Immersive Visual Stage & Semantic UI Automation (high-frequency frames & cursor live in dedicated flows!)
     val stageMode: String = "desktop", // "desktop" or "window"
     val stageHwnd: Long? = null,
-    val stageBitmap: Bitmap? = null,
-    val stageMeta: StageFrameMeta = StageFrameMeta(),
-    val cursorX: Int = 0,
-    val cursorY: Int = 0,
     val stageWarning: String? = null,
     val windowStateNotice: WindowStateNotice? = null,
     val focusedInputHint: FocusedInputHint? = null,
@@ -116,6 +113,9 @@ data class WorkstationUiState(
     val stageRoi: StageRoi? = null,
     val stageDragLocked: Boolean = false,
     val stageXRayEnabled: Boolean = false,
+    val isFullscreen: Boolean = false,
+    val stageControlsCollapsed: Boolean = false,
+    val showLiveKeyboard: Boolean = false,
     val uiaData: UiaInspectResponse? = null,
     val uiaLoading: Boolean = false,
     val showSemanticSheet: Boolean = false,
@@ -158,6 +158,13 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
         )
     )
     val uiState: StateFlow<WorkstationUiState> = _uiState.asStateFlow()
+
+    // Dedicated high-frequency streams so 24-30 FPS frames & 60Hz pointer moves NEVER recompose KovaRoot!
+    private val _stageFrame = MutableStateFlow<StageFrame?>(null)
+    val stageFrame: StateFlow<StageFrame?> = _stageFrame.asStateFlow()
+
+    private val _stageCursor = MutableStateFlow(0 to 0)
+    val stageCursor: StateFlow<Pair<Int, Int>> = _stageCursor.asStateFlow()
 
     private var client: KovaClient? = null
     private var eventsWs: WebSocket? = null
@@ -328,13 +335,18 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
         lastSentPointerSeq = 0L
         lastLocalPointerMs = 0L
 
+        _stageFrame.value = null
+        _stageCursor.value = 0 to 0
+
         _uiState.update {
             it.copy(
                 activeProfile = if (keepProfile) it.activeProfile else null,
                 connected = false,
                 connecting = false,
                 latencyMs = null,
-                stageBitmap = null,
+                isFullscreen = false,
+                stageControlsCollapsed = false,
+                showLiveKeyboard = false,
                 windowStateNotice = null,
                 focusedInputHint = null,
                 showWorkspaceSwitcher = false,
@@ -409,7 +421,14 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
 
     fun selectTab(tab: WorkspaceTab) {
         val prev = _uiState.value.activeTab
-        _uiState.update { it.copy(activeTab = tab, showWorkspaceSwitcher = false) }
+        _uiState.update {
+            it.copy(
+                activeTab = tab,
+                showWorkspaceSwitcher = false,
+                isFullscreen = if (tab != WorkspaceTab.STAGE) false else it.isFullscreen,
+                showLiveKeyboard = if (tab != WorkspaceTab.STAGE) false else it.showLiveKeyboard
+            )
+        }
         if (tab == WorkspaceTab.STAGE) {
             if (stageWs == null) startStageStream() else sendStageConfig()
             refreshWindows(withThumbnails = false)
@@ -631,14 +650,12 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
             onFrame = { frame ->
                 val now = System.currentTimeMillis()
                 val acceptHostCursor = (now - lastLocalPointerMs) > 280L
-                _uiState.update { state ->
-                    state.copy(
-                        stageBitmap = frame.bitmap,
-                        stageMeta = frame.meta,
-                        cursorX = if (acceptHostCursor) frame.meta.cursorX else state.cursorX,
-                        cursorY = if (acceptHostCursor) frame.meta.cursorY else state.cursorY,
-                        windowStateNotice = null
-                    )
+                _stageFrame.value = frame
+                if (acceptHostCursor) {
+                    _stageCursor.value = frame.meta.cursorX to frame.meta.cursorY
+                }
+                if (_uiState.value.windowStateNotice != null) {
+                    _uiState.update { it.copy(windowStateNotice = null) }
                 }
             },
             onWarning = { warn ->
@@ -647,7 +664,7 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
             onCursorAck = { cx, cy, ackSeq ->
                 // Ignore stale ACKs from earlier packets so local cursor NEVER jumps backward!
                 if (ackSeq >= lastSentPointerSeq) {
-                    _uiState.update { it.copy(cursorX = cx, cursorY = cy) }
+                    _stageCursor.value = cx to cy
                 }
             },
             onWindowState = { st, hwnd, message ->
@@ -695,7 +712,7 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
             if (s.stageHwnd != null) put("hwnd", s.stageHwnd)
             put("fps", prefs.streamFps)
             put("quality", prefs.streamQuality)
-            put("format", "webp")
+            put("format", prefs.streamFormat)
             put("max_width", prefs.streamMaxWidth)
             val roi = s.stageRoi
             if (roi != null) {
@@ -769,6 +786,41 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
         _uiState.update { it.copy(showPromptComposer = visible, focusedInputHint = if (visible) null else it.focusedInputHint) }
     }
 
+    fun setLiveKeyboardVisible(visible: Boolean) {
+        _uiState.update {
+            it.copy(
+                showLiveKeyboard = visible,
+                focusedInputHint = if (visible) null else it.focusedInputHint
+            )
+        }
+    }
+
+    fun setFullscreen(enabled: Boolean) {
+        _uiState.update {
+            it.copy(
+                isFullscreen = enabled,
+                stageControlsCollapsed = if (enabled) true else false
+            )
+        }
+    }
+
+    fun setStageControlsCollapsed(collapsed: Boolean) {
+        _uiState.update { it.copy(stageControlsCollapsed = collapsed) }
+    }
+
+    fun toggleStageFillScreen() {
+        updatePreferences { it.copy(stageFillScreen = !it.stageFillScreen) }
+    }
+
+    fun sendImePatch(backspaces: Int, text: String) {
+        if (backspaces <= 0 && text.isEmpty()) return
+        stageWs?.send(buildJsonObject {
+            put("type", "ime_patch")
+            put("backspaces", backspaces)
+            put("text", text)
+        }.toString())
+    }
+
     fun activateLiveDisplay() {
         val c = client ?: return
         viewModelScope.launch {
@@ -831,7 +883,7 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
         val nextSeq = seq ?: (lastSentPointerSeq + 1L)
         if (nextSeq > lastSentPointerSeq) lastSentPointerSeq = nextSeq
         lastLocalPointerMs = System.currentTimeMillis()
-        _uiState.update { it.copy(cursorX = x, cursorY = y) }
+        _stageCursor.value = x to y
         stageWs?.send(buildJsonObject {
             put("type", "mouse_move")
             put("x", x)
@@ -844,7 +896,7 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
     fun sendPointerDown(x: Int, y: Int, button: String = "left") {
         lastSentPointerSeq += 1L
         lastLocalPointerMs = System.currentTimeMillis()
-        _uiState.update { it.copy(cursorX = x, cursorY = y) }
+        _stageCursor.value = x to y
         stageWs?.send(buildJsonObject {
             put("type", "pointer_down")
             put("x", x)
@@ -858,7 +910,7 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
     fun sendPointerUp(x: Int, y: Int, button: String = "left") {
         lastSentPointerSeq += 1L
         lastLocalPointerMs = System.currentTimeMillis()
-        _uiState.update { it.copy(cursorX = x, cursorY = y) }
+        _stageCursor.value = x to y
         stageWs?.send(buildJsonObject {
             put("type", "pointer_up")
             put("x", x)
@@ -886,7 +938,7 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
         lastSentPointerSeq += 1L
         lastLocalPointerMs = System.currentTimeMillis()
         if (x != null && y != null) {
-            _uiState.update { it.copy(cursorX = x, cursorY = y) }
+            _stageCursor.value = x to y
         }
         stageWs?.send(buildJsonObject {
             put("type", "mouse_click")
@@ -1333,7 +1385,8 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
         if (stageWs != null && (
                 next.streamFps != prev.streamFps ||
                 next.streamQuality != prev.streamQuality ||
-                next.streamMaxWidth != prev.streamMaxWidth
+                next.streamMaxWidth != prev.streamMaxWidth ||
+                next.streamFormat != prev.streamFormat
             )
         ) {
             sendStageConfig()
