@@ -90,12 +90,15 @@ async def test_uia_bridge_compiles_and_inspects(tmp_path: Path) -> None:
     exe = bridge.ensure_compiled()
     assert exe is not None and exe.exists(), f"UIA C# helper compile failed: {bridge._compile_error}"
     try:
+        pong = await bridge.ping()
+        assert pong.get("ok") is True and pong.get("pong") is True
         wins = WindowManager().list_windows()
         target_hwnd = wins[0]["hwnd"] if wins else 0
         res = await bridge.inspect(hwnd=target_hwnd, max_nodes=80, budget_ms=1000)
         assert "elements" in res
-        # On interactive Windows desktops, inspect should succeed cleanly
-        if target_hwnd != 0:
+        # On interactive Windows desktops (outside headless GitHub Actions runners), inspect succeeds directly
+        import os
+        if target_hwnd != 0 and not os.environ.get("CI"):
             assert res.get("ok") is True
     finally:
         await bridge.close()

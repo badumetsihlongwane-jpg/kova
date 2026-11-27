@@ -134,10 +134,13 @@ class UiaBridge:
                 await self.close()
                 return {"ok": False, "error": str(exc), "elements": []}
 
+    async def ping(self) -> dict[str, Any]:
+        return await self._request({"cmd": "ping"}, timeout=10.0)
+
     async def inspect(self, hwnd: int = 0, max_nodes: int = 160, budget_ms: int = 650) -> dict[str, Any]:
         return await self._request(
             {"cmd": "inspect", "hwnd": int(hwnd), "max_nodes": max_nodes, "budget_ms": budget_ms},
-            timeout=3.5,
+            timeout=10.0,
         )
 
     async def action(self, hwnd: int, runtime_id: str, action: str, value: str = "") -> dict[str, Any]:
@@ -149,7 +152,7 @@ class UiaBridge:
                 "action": action,
                 "value": value,
             },
-            timeout=3.0,
+            timeout=6.0,
         )
 
     async def close(self) -> None:
