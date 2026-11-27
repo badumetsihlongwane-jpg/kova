@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,11 +19,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Terminal
-import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,11 +46,11 @@ import com.kova.workstation.ui.connect.ConnectScreen
 import com.kova.workstation.ui.files.CodeEditorScreen
 import com.kova.workstation.ui.files.ForgeFilesScreen
 import com.kova.workstation.ui.files.GitPanelSheet
-import com.kova.workstation.ui.hub.PulseHubScreen
 import com.kova.workstation.ui.settings.SettingsScreen
 import com.kova.workstation.ui.stage.LensStageScreen
 import com.kova.workstation.ui.stage.PromptComposerSheet
 import com.kova.workstation.ui.stage.SemanticSheet
+import com.kova.workstation.ui.stage.WorkspaceSwitcherSheet
 import com.kova.workstation.ui.terminal.ShellScreen
 import com.kova.workstation.ui.theme.KovaPalette
 import com.kova.workstation.ui.theme.KovaTheme
@@ -72,7 +70,6 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                     onPairingUri = { viewModel.handleIncomingPairingUri(it) }
                 )
             } else {
-                // Active Editor takes full focus over Forge
                 val openEditor = state.editor
                 if (openEditor != null) {
                     Box(
@@ -102,7 +99,9 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                 workstationName = state.activeProfile?.name ?: "Windows",
                                 connected = state.connected,
                                 latencyMs = state.latencyMs,
-                                onOpenComposer = { viewModel.setPromptComposerVisible(true) }
+                                onSettingsTab = state.activeTab == WorkspaceTab.SETTINGS,
+                                onOpenComposer = { viewModel.setPromptComposerVisible(true) },
+                                onOpenSettings = { viewModel.selectTab(WorkspaceTab.SETTINGS) }
                             )
                         },
                         bottomBar = {
@@ -111,16 +110,10 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                 tonalElevation = 4.dp
                             ) {
                                 NavigationBarItem(
-                                    selected = state.activeTab == WorkspaceTab.PULSE,
-                                    onClick = { viewModel.selectTab(WorkspaceTab.PULSE) },
-                                    icon = { Icon(Icons.Rounded.Dashboard, null) },
-                                    label = { Text("Pulse") }
-                                )
-                                NavigationBarItem(
-                                    selected = state.activeTab == WorkspaceTab.LENS,
-                                    onClick = { viewModel.selectTab(WorkspaceTab.LENS) },
-                                    icon = { Icon(Icons.Rounded.Visibility, null) },
-                                    label = { Text("Lens") }
+                                    selected = state.activeTab == WorkspaceTab.STAGE,
+                                    onClick = { viewModel.selectTab(WorkspaceTab.STAGE) },
+                                    icon = { Icon(Icons.Rounded.DesktopWindows, null) },
+                                    label = { Text("Stage") }
                                 )
                                 NavigationBarItem(
                                     selected = state.activeTab == WorkspaceTab.SHELL,
@@ -138,7 +131,7 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                     selected = state.activeTab == WorkspaceTab.SETTINGS,
                                     onClick = { viewModel.selectTab(WorkspaceTab.SETTINGS) },
                                     icon = { Icon(Icons.Rounded.Settings, null) },
-                                    label = { Text("Prefs") }
+                                    label = { Text("Settings") }
                                 )
                             }
                         }
@@ -149,41 +142,24 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                 .padding(innerPadding)
                         ) {
                             when (state.activeTab) {
-                                WorkspaceTab.PULSE -> PulseHubScreen(
+                                WorkspaceTab.STAGE -> LensStageScreen(
                                     state = state,
-                                    onRefreshWindows = { viewModel.refreshWindows(withThumbnails = true) },
-                                    onOpenWindowStage = viewModel::openWindowInStage,
-                                    onOpenFullDesktop = {
-                                        viewModel.setStageSource("desktop", null)
-                                        viewModel.selectTab(WorkspaceTab.LENS)
-                                    },
-                                    onWindowAction = { hwnd, act -> viewModel.windowAction(hwnd, act) },
-                                    onLaunchApp = { app -> viewModel.launchApp(app.target, app.args) },
-                                    onOpenPromptComposer = { viewModel.setPromptComposerVisible(true) },
-                                    onPushClipboard = viewModel::pushAndroidClipboardToWindows,
-                                    onPullClipboard = {
-                                        viewModel.refreshClipboard()
-                                        if (state.windowsClipboardText.isNotBlank()) {
-                                            viewModel.copyToAndroidClipboard(state.windowsClipboardText)
-                                        }
-                                    },
-                                    onCopyClipboardItem = { viewModel.copyToAndroidClipboard(it) }
-                                )
-
-                                WorkspaceTab.LENS -> LensStageScreen(
-                                    state = state,
+                                    onOpenSwitcher = { viewModel.setWorkspaceSwitcherVisible(true) },
+                                    onSwitchAdjacentWindow = viewModel::switchAdjacentWindow,
                                     onSelectSource = viewModel::setStageSource,
                                     onWindowAction = { hwnd, act -> viewModel.windowAction(hwnd, act) },
                                     onModeChange = viewModel::setStageInputMode,
                                     onSetRoi = viewModel::setStageRoi,
-                                    onMouseMoveAbs = viewModel::sendMouseMoveAbs,
-                                    onMouseMoveRel = viewModel::sendMouseMoveRel,
+                                    onPointerMoveAbs = viewModel::sendPointerMoveAbs,
+                                    onPointerDown = viewModel::sendPointerDown,
+                                    onPointerUp = viewModel::sendPointerUp,
                                     onMouseClick = viewModel::sendMouseClick,
                                     onScroll = viewModel::sendScroll,
                                     onToggleDragLock = viewModel::toggleStageDragLock,
                                     onToggleXRay = viewModel::toggleXRayOverlay,
                                     onOpenControls = { viewModel.setSemanticSheetVisible(true) },
                                     onOpenComposer = { viewModel.setPromptComposerVisible(true) },
+                                    onDismissFocusedHint = viewModel::dismissFocusedInputHint,
                                     onSendKeys = viewModel::sendKeyChord,
                                     onInvokeUia = viewModel::invokeUiaElement,
                                     onActivateDisplay = viewModel::activateLiveDisplay
@@ -226,11 +202,38 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                 WorkspaceTab.SETTINGS -> SettingsScreen(
                                     state = state,
                                     onUpdatePrefs = viewModel::updatePreferences,
+                                    onPingNow = viewModel::pingNow,
+                                    onReconnectNow = viewModel::reconnectNow,
+                                    onActivateDisplay = viewModel::activateLiveDisplay,
+                                    onOpenRemoteWindowsSettings = viewModel::openRemoteWindowsSettings,
+                                    onResetDefaults = viewModel::resetPreferencesToDefaults,
                                     onDisconnect = viewModel::disconnect
                                 )
                             }
                         }
                     }
+                }
+
+                // Slide-Over Windows Workspace Switcher, Quick Launch, Telemetry & Clipboard
+                if (state.showWorkspaceSwitcher) {
+                    WorkspaceSwitcherSheet(
+                        state = state,
+                        onSelectDesktop = { viewModel.setStageSource("desktop", null) },
+                        onOpenWindow = viewModel::openWindowInStage,
+                        onWindowAction = { hwnd, act -> viewModel.windowAction(hwnd, act) },
+                        onReopenClosed = viewModel::reopenClosedWindow,
+                        onLaunchApp = { app -> viewModel.launchApp(app.target, app.args, stageAfterLaunch = true) },
+                        onRefreshWindows = { viewModel.refreshWindows(withThumbnails = true) },
+                        onPushClipboard = viewModel::pushAndroidClipboardToWindows,
+                        onPullClipboard = {
+                            viewModel.refreshClipboard()
+                            if (state.windowsClipboardText.isNotBlank()) {
+                                viewModel.copyToAndroidClipboard(state.windowsClipboardText)
+                            }
+                        },
+                        onCopyClipboard = { viewModel.copyToAndroidClipboard(it) },
+                        onDismiss = { viewModel.setWorkspaceSwitcherVisible(false) }
+                    )
                 }
 
                 // Shared Modals: Semantic UI Control Sheet, Smart Prompt Composer, Git Panel
@@ -303,7 +306,9 @@ private fun CompactStatusBar(
     workstationName: String,
     connected: Boolean,
     latencyMs: Long?,
-    onOpenComposer: () -> Unit
+    onSettingsTab: Boolean,
+    onOpenComposer: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -344,8 +349,15 @@ private fun CompactStatusBar(
             }
         }
 
-        IconButton(onClick = onOpenComposer, modifier = Modifier.size(34.dp)) {
-            Icon(Icons.Rounded.AutoAwesome, contentDescription = "Send Prompt", tint = KovaPalette.Cyan, modifier = Modifier.size(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onOpenComposer, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Rounded.AutoAwesome, contentDescription = "Send Text / Prompt", tint = KovaPalette.Cyan, modifier = Modifier.size(20.dp))
+            }
+            if (!onSettingsTab) {
+                IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Rounded.Settings, contentDescription = "Kova Settings", tint = KovaPalette.InkSecondary, modifier = Modifier.size(19.dp))
+                }
+            }
         }
     }
 }

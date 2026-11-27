@@ -113,6 +113,7 @@ class UiaBridge:
 
     async def _request(self, payload: dict[str, Any], timeout: float = 3.0) -> dict[str, Any]:
         async with self._lock:
+            was_cold = self._proc is None or self._proc.returncode is not None
             proc = await self._ensure_daemon()
             if proc is None or proc.stdin is None or proc.stdout is None:
                 return {
@@ -121,11 +122,12 @@ class UiaBridge:
                     "elements": [],
                 }
 
+            effective_timeout = max(timeout, 8.0) if was_cold else timeout
             try:
                 line = (json.dumps(payload) + "\n").encode("utf-8")
                 proc.stdin.write(line)
                 await proc.stdin.drain()
-                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
+                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=effective_timeout)
                 if not raw:
                     await self.close()
                     return {"ok": False, "error": "UIA daemon exited unexpectedly", "elements": []}
@@ -139,6 +141,9 @@ class UiaBridge:
 
     async def ping(self) -> dict[str, Any]:
         return await self._request({"cmd": "ping"}, timeout=10.0)
+
+    async def focused_input(self) -> dict[str, Any]:
+        return await self._request({"cmd": "focused"}, timeout=1.8)
 
     async def inspect(self, hwnd: int = 0, max_nodes: int = 160, budget_ms: int = 650) -> dict[str, Any]:
         return await self._request(

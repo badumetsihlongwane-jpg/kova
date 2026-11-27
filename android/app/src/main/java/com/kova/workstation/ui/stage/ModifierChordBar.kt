@@ -1,10 +1,11 @@
 package com.kova.workstation.ui.stage
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -57,6 +58,7 @@ private val DESKTOP_SHORTCUTS = listOf(
     QuickKey("Ctrl+V", listOf("ctrl", "v")),
     QuickKey("Ctrl+Z", listOf("ctrl", "z")),
     QuickKey("Ctrl+S", listOf("ctrl", "s")),
+    QuickKey("Ctrl+A", listOf("ctrl", "a")),
     QuickKey("Cmd+P", listOf("ctrl", "shift", "p")),
     QuickKey("Alt+Tab", listOf("alt", "tab")),
     QuickKey("Win", listOf("win")),
@@ -68,6 +70,10 @@ private val DESKTOP_SHORTCUTS = listOf(
     QuickKey("Del", listOf("delete"))
 )
 
+/**
+ * Translucent floating bottom cockpit dock overlaid cleanly above the fixed-size Stage canvas.
+ * Opening the Keys drawer NEVER changes canvas height or causes aspect-ratio jumps.
+ */
 @Composable
 fun ModifierChordBar(
     inputMode: StageInputMode,
@@ -79,93 +85,101 @@ fun ModifierChordBar(
     onToggleDragLock: () -> Unit,
     onOpenComposer: () -> Unit,
     onOpenControls: () -> Unit,
-    onSendKeys: (List<String>) -> Unit
+    onSendKeys: (List<String>) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
     var showKeysDrawer by remember { mutableStateOf(false) }
 
     val nextMode = when (inputMode) {
+        StageInputMode.TOUCH -> StageInputMode.TRACKPAD
         StageInputMode.TRACKPAD -> StageInputMode.LOUPE
-        StageInputMode.LOUPE -> StageInputMode.DIRECT
-        StageInputMode.DIRECT -> StageInputMode.TRACKPAD
+        StageInputMode.LOUPE -> StageInputMode.TOUCH
     }
     val (modeLabel, modeIcon) = when (inputMode) {
+        StageInputMode.TOUCH -> "Touch" to Icons.Rounded.TouchApp
         StageInputMode.TRACKPAD -> "Pad" to Icons.Rounded.Mouse
         StageInputMode.LOUPE -> "Loupe" to Icons.Rounded.ZoomIn
-        StageInputMode.DIRECT -> "Touch" to Icons.Rounded.TouchApp
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .background(KovaPalette.SlateDeep.copy(alpha = 0.96f))
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Expandable compact shortcut & mouse-button drawer (keeps default canvas clutter-free!)
+        // Floating expandable keyboard & mouse-button drawer (overlaid cleanly above dock)
         AnimatedVisibility(
             visible = showKeysDrawer || dragLocked,
-            enter = expandVertically(),
-            exit = shrinkVertically()
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 }
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(bottom = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = KovaPalette.SlateDeep.copy(alpha = 0.90f),
+                border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.75f)),
+                shadowElevation = 6.dp
             ) {
-                KeyChip("L-Click", accent = KovaPalette.Emerald) {
-                    if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onLeftClick()
-                }
-                KeyChip("R-Click", accent = KovaPalette.Violet) {
-                    if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onRightClick()
-                }
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (dragLocked) KovaPalette.Rose.copy(alpha = 0.24f) else KovaPalette.SlateCard,
-                    border = BorderStroke(1.dp, if (dragLocked) KovaPalette.Rose else KovaPalette.BorderDark),
-                    modifier = Modifier.clickable {
-                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onToggleDragLock()
-                    }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Rounded.DragIndicator,
-                            null,
-                            modifier = Modifier.size(14.dp),
-                            tint = if (dragLocked) KovaPalette.Rose else KovaPalette.InkSecondary
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            if (dragLocked) "Dragging" else "Drag",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (dragLocked) KovaPalette.Rose else KovaPalette.InkPrimary
-                        )
-                    }
-                }
-
-                DESKTOP_SHORTCUTS.forEach { key ->
-                    KeyChip(key.label) {
+                    KeyChip("L-Click", accent = KovaPalette.Emerald) {
                         if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSendKeys(key.keys)
+                        onLeftClick()
+                    }
+                    KeyChip("R-Click", accent = KovaPalette.Violet) {
+                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onRightClick()
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (dragLocked) KovaPalette.Rose.copy(alpha = 0.24f) else KovaPalette.SlateCard,
+                        border = BorderStroke(1.dp, if (dragLocked) KovaPalette.Rose else KovaPalette.BorderDark),
+                        modifier = Modifier.clickable {
+                            if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onToggleDragLock()
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Rounded.DragIndicator,
+                                null,
+                                modifier = Modifier.size(14.dp),
+                                tint = if (dragLocked) KovaPalette.Rose else KovaPalette.InkSecondary
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                if (dragLocked) "Dragging" else "Drag",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (dragLocked) KovaPalette.Rose else KovaPalette.InkPrimary
+                            )
+                        }
+                    }
+
+                    DESKTOP_SHORTCUTS.forEach { key ->
+                        KeyChip(key.label) {
+                            if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSendKeys(key.keys)
+                        }
                     }
                 }
             }
         }
 
-        // Clean, Calm Single-Row Primary Dock
+        // Calm, Translucent Single-Row Floating Cockpit Pill
         Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = KovaPalette.SlateCard,
-            border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.7f)),
+            shape = RoundedCornerShape(18.dp),
+            color = KovaPalette.SlateDeep.copy(alpha = 0.88f),
+            border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.8f)),
+            shadowElevation = 8.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -184,7 +198,7 @@ fun ModifierChordBar(
                         if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onModeChange(nextMode)
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1.05f)
                 )
                 DockAction(
                     label = "Type",
@@ -195,7 +209,7 @@ fun ModifierChordBar(
                         if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onOpenComposer()
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(0.95f)
                 )
                 DockAction(
                     label = "Controls",
@@ -211,7 +225,7 @@ fun ModifierChordBar(
                     tint = if (showKeysDrawer) KovaPalette.Cyan else KovaPalette.InkSecondary,
                     selected = showKeysDrawer,
                     onClick = { showKeysDrawer = !showKeysDrawer },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(0.95f)
                 )
             }
         }
@@ -229,8 +243,8 @@ private fun DockAction(
 ) {
     Surface(
         modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(11.dp),
-        color = if (selected) tint.copy(alpha = 0.14f) else Color.Transparent
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) tint.copy(alpha = 0.16f) else Color.Transparent
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),

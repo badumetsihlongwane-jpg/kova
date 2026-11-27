@@ -11,9 +11,10 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from kova_host.auth import build_pairing_uri, render_qr_terminal, verify_token
-from kova_host.capture import ScreenCapturer
+from kova_host.capture import ScreenCapturer, WindowUnavailableError
 from kova_host.clipboard import ClipboardManager
 from kova_host.config import create_ssl_context, ensure_tls_certificate, load_or_create_config
+from kova_host.input_ctrl import InputController
 from kova_host.server import KovaServer
 from kova_host.telemetry import TelemetryCollector
 from kova_host.uia_bridge import UiaBridge
@@ -53,10 +54,16 @@ def test_telemetry_and_windows() -> None:
 
 def test_screen_capture_and_roi() -> None:
     cap = ScreenCapturer()
-    res = cap.capture_frame(mode="desktop", max_width=480, quality=70, fmt="webp")
-    assert len(res.image_bytes) > 100
-    assert res.meta["frame_width"] <= 480
-    assert res.meta["mime"] == "image/webp"
+    res1 = cap.capture_frame(mode="desktop", max_width=480, quality=70, fmt="webp")
+    res2 = cap.capture_frame(mode="desktop", max_width=480, quality=70, fmt="webp")
+    assert len(res1.image_bytes) > 100
+    assert res1.meta["frame_width"] <= 480
+    assert res1.meta["mime"] == "image/webp"
+    # Even integer output dimensions & exact aspect stability across consecutive captures
+    assert res1.meta["frame_width"] % 2 == 0
+    assert res1.meta["frame_height"] % 2 == 0
+    assert res1.meta["frame_width"] == res2.meta["frame_width"]
+    assert res1.meta["frame_height"] == res2.meta["frame_height"]
 
     # Server-side ROI crop should produce a valid cropped frame
     roi_res = cap.capture_frame(
@@ -69,6 +76,36 @@ def test_screen_capture_and_roi() -> None:
     assert len(roi_res.image_bytes) > 100
     assert roi_res.meta["mime"] == "image/jpeg"
     assert "roi" in roi_res.meta
+
+    # Invalid window handle raises clean WindowUnavailableError instead of silently flipping to desktop
+    with pytest.raises(WindowUnavailableError):
+        cap.capture_frame(mode="window", hwnd=999999999, allow_fallback_to_desktop=False)
+
+
+def test_precision_mouse_zero_drift() -> None:
+    """Verify deterministic physical-pixel movement across slow micro-steps & fast sweeps (no OS accel drift)."""
+    ctrl = InputController()
+    orig_x, orig_y = ctrl.get_cursor_pos()
+    try:
+        # Move to known anchor
+        ax, ay = ctrl.move_abs(180, 220)
+        assert (ax, ay) == (180, 220)
+        assert ctrl.get_cursor_pos() == (180, 220)
+
+        # 10 tiny 1-pixel precision steps -> must travel EXACTLY +10px, +10px
+        for _ in range(10):
+            ctrl.move_rel(1, 1)
+        assert ctrl.get_cursor_pos() == (190, 230)
+
+        # Fast large single-step jump (+140px, +180px) -> must NOT be amplified by Windows Enhance Pointer Precision!
+        ctrl.move_rel(140, 180)
+        assert ctrl.get_cursor_pos() == (330, 410)
+
+        # Reverse fast diagonal sweep back to exact origin anchor
+        ctrl.move_rel(-150, -190)
+        assert ctrl.get_cursor_pos() == (180, 220)
+    finally:
+        ctrl.move_abs(orig_x, orig_y)
 
 
 def test_clipboard_roundtrip() -> None:
@@ -92,6 +129,8 @@ async def test_uia_bridge_compiles_and_inspects(tmp_path: Path) -> None:
     try:
         pong = await bridge.ping()
         assert pong.get("ok") is True and pong.get("pong") is True
+        focused = await bridge.focused_input()
+        assert "editable" in focused
         wins = WindowManager().list_windows()
         target_hwnd = wins[0]["hwnd"] if wins else 0
         res = await bridge.inspect(hwnd=target_hwnd, max_nodes=80, budget_ms=1000)
@@ -179,11 +218,13 @@ async def test_full_server_rest_files_conpty_and_websockets(tmp_path: Path) -> N
         r_del = await client.delete(f"/api/terminals/{tid}", headers=headers)
         assert r_del.status == 200
 
-        # 4. Visual Stage binary frame stream over WebSocket!
+        # 4. Visual Stage binary frame stream + sequence-numbered cursor ack over WebSocket!
         async with client.ws_connect(f"/ws/stage?token={cfg.token}") as ws:
             await ws.send_json({"type": "config", "mode": "desktop", "fps": 5, "max_width": 480, "quality": 65})
+            await ws.send_json({"type": "mouse_move", "x": 140, "y": 160, "seq": 42})
             got_frame = False
-            for _ in range(10):
+            got_ack = False
+            for _ in range(15):
                 msg = await asyncio.wait_for(ws.receive(), timeout=3.0)
                 if msg.type.name == "BINARY":
                     raw = msg.data
@@ -193,8 +234,15 @@ async def test_full_server_rest_files_conpty_and_websockets(tmp_path: Path) -> N
                     assert meta["frame_width"] <= 480
                     assert len(img_bytes) > 100
                     got_frame = True
+                elif msg.type.name == "TEXT":
+                    ev = json.loads(msg.data)
+                    if ev.get("type") == "cursor_ack" and ev.get("seq") == 42:
+                        assert ev["x"] == 140 and ev["y"] == 160
+                        got_ack = True
+                if got_frame and got_ack:
                     break
             assert got_frame, "Did not receive binary stage frame over WebSocket"
+            assert got_ack, "Did not receive exact sequence-numbered cursor_ack"
 
         # 5. Live events WebSocket (telemetry push + ping/pong)
         async with client.ws_connect(f"/ws/events?token={cfg.token}") as ws:

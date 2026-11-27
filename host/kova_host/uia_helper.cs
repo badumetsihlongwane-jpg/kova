@@ -26,7 +26,36 @@ namespace KovaUiaHelper
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool CloseDesktop(IntPtr hDesktop);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
+
+        [DllImport("shcore.dll")]
+        private static extern int SetProcessDpiAwareness(int value);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetProcessDPIAware();
+
         private static IntPtr _attachedDesk = IntPtr.Zero;
+
+        private static void EnablePerMonitorDpi()
+        {
+            try
+            {
+                if (SetProcessDpiAwarenessContext(new IntPtr(-4))) return;
+            }
+            catch { }
+            try
+            {
+                SetProcessDpiAwareness(2);
+                return;
+            }
+            catch { }
+            try
+            {
+                SetProcessDPIAware();
+            }
+            catch { }
+        }
 
         private static void EnsureInputDesktop()
         {
@@ -75,6 +104,7 @@ namespace KovaUiaHelper
         [MTAThread]
         public static void Main(string[] args)
         {
+            EnablePerMonitorDpi();
             EnsureInputDesktop();
             Console.InputEncoding = Encoding.UTF8;
             Console.OutputEncoding = Encoding.UTF8;
@@ -111,6 +141,10 @@ namespace KovaUiaHelper
                         string action = req.ContainsKey("action") && req["action"] != null ? Convert.ToString(req["action"]) : "invoke";
                         string value = req.ContainsKey("value") && req["value"] != null ? Convert.ToString(req["value"]) : "";
                         result = ExecuteAction(hwnd, runtimeId, action, value);
+                    }
+                    else if (cmd == "focused")
+                    {
+                        result = GetFocusedInput();
                     }
                     else if (cmd == "ping")
                     {
@@ -366,6 +400,43 @@ namespace KovaUiaHelper
                 catch { }
             }
             return null;
+        }
+
+        private static Dictionary<string, object> GetFocusedInput()
+        {
+            EnsureInputDesktop();
+            try
+            {
+                AutomationElement el = AutomationElement.FocusedElement;
+                if (el == null)
+                {
+                    return new Dictionary<string, object> { { "ok", true }, { "editable", false }, { "role", "" }, { "name", "" } };
+                }
+                ControlType ct = el.Current.ControlType;
+                string role = RoleName(ct);
+                string name = (el.Current.Name ?? "").Trim();
+                bool editable = (ct == ControlType.Edit || ct == ControlType.Document);
+                object pat;
+                if (!editable && el.TryGetCurrentPattern(ValuePattern.Pattern, out pat))
+                {
+                    try { editable = !((ValuePattern)pat).Current.IsReadOnly; } catch { }
+                }
+                if (ct == ControlType.Document && el.TryGetCurrentPattern(ValuePattern.Pattern, out pat))
+                {
+                    try { editable = !((ValuePattern)pat).Current.IsReadOnly; } catch { }
+                }
+                return new Dictionary<string, object>
+                {
+                    { "ok", true },
+                    { "editable", editable },
+                    { "role", role },
+                    { "name", name.Length > 80 ? name.Substring(0, 80) : name }
+                };
+            }
+            catch (Exception ex)
+            {
+                return new Dictionary<string, object> { { "ok", false }, { "editable", false }, { "error", ex.Message } };
+            }
         }
 
         private static Dictionary<string, object> ExecuteAction(long hwndVal, string runtimeId, string action, string value)

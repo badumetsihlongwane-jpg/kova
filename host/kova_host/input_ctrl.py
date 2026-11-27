@@ -1,4 +1,4 @@
-"""64-bit safe Win32 SendInput controller for precision mouse, scroll, key chords, and Unicode dispatch."""
+"""64-bit safe Win32 SendInput & SetCursorPos controller engineered for zero-drift mobile precision."""
 
 from __future__ import annotations
 
@@ -89,6 +89,8 @@ user32.GetCursorPos.argtypes = [ctypes.POINTER(wt.POINT)]
 user32.GetCursorPos.restype = wt.BOOL
 user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
 user32.SetCursorPos.restype = wt.BOOL
+user32.GetForegroundWindow.argtypes = []
+user32.GetForegroundWindow.restype = wt.HWND
 
 VK_MAP: dict[str, int] = {
     "backspace": 0x08,
@@ -166,7 +168,29 @@ def _send_inputs(items: list[INPUT]) -> int:
     return int(user32.SendInput(len(items), arr, ctypes.sizeof(INPUT)))
 
 
+def _virtual_bounds() -> tuple[int, int, int, int]:
+    vx = int(user32.GetSystemMetrics(76))
+    vy = int(user32.GetSystemMetrics(77))
+    vw = max(1, int(user32.GetSystemMetrics(78) or user32.GetSystemMetrics(0) or 1))
+    vh = max(1, int(user32.GetSystemMetrics(79) or user32.GetSystemMetrics(1) or 1))
+    return vx, vy, vw, vh
+
+
+def _clamp_to_virtual_screen(x: int, y: int) -> tuple[int, int]:
+    vx, vy, vw, vh = _virtual_bounds()
+    cx = max(vx, min(vx + vw - 1, int(x)))
+    cy = max(vy, min(vy + vh - 1, int(y)))
+    return cx, cy
+
+
 class InputController:
+    """Deterministic physical-pixel mouse/touch & keyboard input controller.
+
+    Uses SetCursorPos (exact physical virtual-screen coordinates under Per-Monitor V2 DPI)
+    plus absolute SendInput so Windows's non-linear Enhance Pointer Precision curve NEVER
+    amplifies or distorts fast finger movements.
+    """
+
     def get_cursor_pos(self) -> tuple[int, int]:
         ensure_input_desktop()
         pt = wt.POINT()
@@ -174,15 +198,15 @@ class InputController:
             return int(pt.x), int(pt.y)
         return 0, 0
 
-    def move_abs(self, x: int, y: int) -> None:
-        vx = user32.GetSystemMetrics(76)
-        vy = user32.GetSystemMetrics(77)
-        vw = max(1, user32.GetSystemMetrics(78) or user32.GetSystemMetrics(0))
-        vh = max(1, user32.GetSystemMetrics(79) or user32.GetSystemMetrics(1))
-        nx = int(round(((x - vx) * 65535) / max(1, vw - 1)))
-        ny = int(round(((y - vy) * 65535) / max(1, vh - 1)))
-        nx = max(0, min(65535, nx))
-        ny = max(0, min(65535, ny))
+    def move_abs(self, x: int, y: int) -> tuple[int, int]:
+        ensure_input_desktop()
+        cx, cy = _clamp_to_virtual_screen(x, y)
+        # Emit pixel-centered absolute SendInput (Win32 kernel decodes floor(n * dim / 65536),
+        # so ((p - origin) * 65536 + 32768) // dim hits the exact center of pixel p with zero
+        # off-by-one snapback, waking hover states, tooltips, Electron & DirectInput apps).
+        vx, vy, vw, vh = _virtual_bounds()
+        nx = max(0, min(65535, ((cx - vx) * 65536 + 32768) // max(1, vw)))
+        ny = max(0, min(65535, ((cy - vy) * 65536 + 32768) // max(1, vh)))
         inp = INPUT(
             type=INPUT_MOUSE,
             mi=MOUSEINPUT(
@@ -195,14 +219,24 @@ class InputController:
             ),
         )
         _send_inputs([inp])
+        # Final SetCursorPos guarantees exact physical-pixel placement even across mixed-DPI monitors
+        user32.SetCursorPos(cx, cy)
+        return cx, cy
 
     def move_rel(self, dx: int, dy: int) -> tuple[int, int]:
-        inp = INPUT(
-            type=INPUT_MOUSE,
-            mi=MOUSEINPUT(dx=int(dx), dy=int(dy), mouseData=0, dwFlags=MOUSEEVENTF_MOVE, time=0, dwExtraInfo=0),
-        )
-        _send_inputs([inp])
-        return self.get_cursor_pos()
+        """Deterministic 1:1 relative movement bypassing Windows's ballistic mouse acceleration."""
+        ensure_input_desktop()
+        cur_x, cur_y = self.get_cursor_pos()
+        return self.move_abs(cur_x + int(dx), cur_y + int(dy))
+
+    def ensure_window_foreground(self, window_mgr: WindowManager | None, hwnd: int | None) -> None:
+        if not hwnd or window_mgr is None:
+            return
+        ensure_input_desktop()
+        fg = int(user32.GetForegroundWindow() or 0)
+        if fg != int(hwnd):
+            window_mgr.focus_window(int(hwnd))
+            time.sleep(0.03)
 
     def mouse_button(self, button: str, down: bool) -> None:
         b = button.lower()
@@ -217,18 +251,79 @@ class InputController:
         inp = INPUT(type=INPUT_MOUSE, mi=MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=flag, time=0, dwExtraInfo=0))
         _send_inputs([inp])
 
-    def click(self, x: int | None = None, y: int | None = None, button: str = "left", count: int = 1) -> None:
+    def click(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        button: str = "left",
+        count: int = 1,
+        window_mgr: WindowManager | None = None,
+        hwnd: int | None = None,
+    ) -> tuple[int, int]:
+        ensure_input_desktop()
+        if hwnd and window_mgr is not None:
+            self.ensure_window_foreground(window_mgr, hwnd)
         if x is not None and y is not None:
-            self.move_abs(int(x), int(y))
-            time.sleep(0.01)
-        for _ in range(max(1, min(3, count))):
+            cx, cy = self.move_abs(int(x), int(y))
+            time.sleep(0.008)
+        else:
+            cx, cy = self.get_cursor_pos()
+        for i in range(max(1, min(3, count))):
             self.mouse_button(button, True)
-            time.sleep(0.015)
+            time.sleep(0.012)
             self.mouse_button(button, False)
-            if count > 1:
-                time.sleep(0.04)
+            if i + 1 < count:
+                time.sleep(0.045)
+        return cx, cy
 
-    def scroll(self, dx: int = 0, dy: int = 0) -> None:
+    def pointer_down(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        button: str = "left",
+        window_mgr: WindowManager | None = None,
+        hwnd: int | None = None,
+    ) -> tuple[int, int]:
+        ensure_input_desktop()
+        if hwnd and window_mgr is not None:
+            self.ensure_window_foreground(window_mgr, hwnd)
+        if x is not None and y is not None:
+            cx, cy = self.move_abs(int(x), int(y))
+            time.sleep(0.008)
+        else:
+            cx, cy = self.get_cursor_pos()
+        self.mouse_button(button, True)
+        return cx, cy
+
+    def pointer_up(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        button: str = "left",
+    ) -> tuple[int, int]:
+        ensure_input_desktop()
+        if x is not None and y is not None:
+            cx, cy = self.move_abs(int(x), int(y))
+        else:
+            cx, cy = self.get_cursor_pos()
+        self.mouse_button(button, False)
+        return cx, cy
+
+    def scroll(
+        self,
+        dx: int = 0,
+        dy: int = 0,
+        x: int | None = None,
+        y: int | None = None,
+        window_mgr: WindowManager | None = None,
+        hwnd: int | None = None,
+    ) -> None:
+        ensure_input_desktop()
+        if hwnd and window_mgr is not None:
+            self.ensure_window_foreground(window_mgr, hwnd)
+        if x is not None and y is not None:
+            cx, cy = _clamp_to_virtual_screen(int(x), int(y))
+            user32.SetCursorPos(cx, cy)
         items: list[INPUT] = []
         if dy:
             items.append(
@@ -292,7 +387,6 @@ class InputController:
     def type_unicode(self, text: str) -> None:
         if not text:
             return
-        # Encode as UTF-16LE code units so surrogate pairs / emojis work natively
         items: list[INPUT] = []
         for ch in text:
             if ch == "\n":
@@ -327,7 +421,6 @@ class InputController:
                         ),
                     )
                 )
-        # Send in moderate chunks so Windows input queue never overflows
         chunk = 128
         for idx in range(0, len(items), chunk):
             _send_inputs(items[idx : idx + chunk])
@@ -346,7 +439,7 @@ class InputController:
         """Smart mobile-to-Windows text / AI prompt injection."""
         if hwnd and window_mgr is not None:
             window_mgr.focus_window(hwnd)
-            time.sleep(0.08)
+            time.sleep(0.06)
 
         if mode == "paste" and clipboard_mgr is not None:
             clipboard_mgr.set_text(text, source="mobile-dispatch")

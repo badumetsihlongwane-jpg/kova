@@ -27,13 +27,39 @@ data class AppPreferences(
     val streamFps: Int = 12,
     val streamQuality: Int = 78,
     val streamMaxWidth: Int = 960,
-    val touchpadSensitivity: Float = 1.6f,
+    val defaultInputMode: String = "TOUCH",
+    val pointerCurve: String = "BALANCED",
+    val touchpadSensitivity: Float = 1.35f,
+    val naturalScroll: Boolean = true,
+    val scrollSensitivity: Float = 1.0f,
+    val longPressMs: Int = 380,
+    val autoPromptOnTextInput: Boolean = true,
+    val showCursorReticle: Boolean = true,
     val hapticsEnabled: Boolean = true,
     val autoClipboardSync: Boolean = true,
     val keepAliveService: Boolean = true,
     val terminalFontSp: Float = 12.5f,
     val editorFontSp: Float = 13f,
     val darkTheme: Boolean = true
+)
+
+data class FocusedInputHint(
+    val editable: Boolean,
+    val role: String,
+    val name: String,
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
+data class WindowStateNotice(
+    val state: String, // "minimized" or "closed"
+    val hwnd: Long,
+    val message: String
+)
+
+data class ClosedWindowRecord(
+    val title: String,
+    val process: String,
+    val closedAtMs: Long = System.currentTimeMillis()
 )
 
 @Serializable

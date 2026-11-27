@@ -374,7 +374,9 @@ class KovaClient(val profile: WorkstationProfile) {
     fun openStageSocket(
         onFrame: (StageFrame) -> Unit,
         onWarning: (String?) -> Unit,
-        onCursor: (Int, Int) -> Unit,
+        onCursorAck: (x: Int, y: Int, seq: Long) -> Unit,
+        onWindowState: (state: String, hwnd: Long, message: String) -> Unit,
+        onFocusedInput: (editable: Boolean, role: String, name: String) -> Unit,
         onClosed: (String?) -> Unit
     ): WebSocket {
         val req = Request.Builder()
@@ -406,10 +408,23 @@ class KovaClient(val profile: WorkstationProfile) {
                             val msg = obj["message"]?.jsonPrimitive?.content
                             onWarning(if (code == "ok") null else msg)
                         }
-                        "cursor" -> {
+                        "cursor_ack", "cursor" -> {
                             val cx = obj["x"]?.jsonPrimitive?.content?.toIntOrNull() ?: return
                             val cy = obj["y"]?.jsonPrimitive?.content?.toIntOrNull() ?: return
-                            onCursor(cx, cy)
+                            val seq = obj["seq"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+                            onCursorAck(cx, cy, seq)
+                        }
+                        "window_state" -> {
+                            val st = obj["state"]?.jsonPrimitive?.content.orEmpty()
+                            val hwnd = obj["hwnd"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+                            val msg = obj["message"]?.jsonPrimitive?.content.orEmpty()
+                            onWindowState(st, hwnd, msg)
+                        }
+                        "focused_input" -> {
+                            val editable = obj["editable"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+                            val role = obj["role"]?.jsonPrimitive?.content.orEmpty()
+                            val name = obj["name"]?.jsonPrimitive?.content.orEmpty()
+                            onFocusedInput(editable, role, name)
                         }
                     }
                 }
