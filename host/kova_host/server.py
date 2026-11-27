@@ -67,6 +67,7 @@ class KovaServer:
 
         # System & Quick Launch
         app.router.add_get("/api/system/info", self.handle_system_info)
+        app.router.add_post("/api/system/activate-display", self.handle_activate_display)
         app.router.add_post("/api/launch", self.handle_launch)
 
         # Windows & Mobile-Fit Reflow
@@ -207,6 +208,29 @@ class KovaServer:
         info["quick_launch"] = self.config.quick_launch
         info["cert_sha256"] = self.cert_fingerprint
         return web.json_response(info)
+
+    async def handle_activate_display(self, _request: web.Request) -> web.Response:
+        """Hand active RDP session cleanly to local VPS console (tscon) so GUI rendering stays live."""
+        try:
+            snap = await asyncio.to_thread(self.telemetry.snapshot)
+            sid = int(snap.get("session", {}).get("session_id", 0))
+            if sid <= 0:
+                return web.json_response({"ok": False, "error": "No interactive user session found"}, status=400)
+            res = await asyncio.to_thread(
+                subprocess.run,
+                ["tscon", str(sid), "/dest:console"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+            if res.returncode == 0:
+                return web.json_response({"ok": True, "session_id": sid, "message": "Attached session to console display"})
+            return web.json_response(
+                {"ok": False, "error": (res.stderr or res.stdout or f"tscon exited {res.returncode}").strip()},
+                status=500,
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
     async def handle_launch(self, request: web.Request) -> web.Response:
         body = await request.json()

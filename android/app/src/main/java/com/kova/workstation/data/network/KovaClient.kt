@@ -142,6 +142,8 @@ class KovaClient(val profile: WorkstationProfile) {
 
     suspend fun getSystemInfo(): Result<SystemInfo> = getJson("/api/system/info")
 
+    suspend fun activateDisplay(): Result<GenericOkResponse> = postJson("/api/system/activate-display", buildJsonObject {})
+
     suspend fun listWindows(): Result<WindowsListResponse> = getJson("/api/windows")
 
     suspend fun fetchWindowThumbnail(hwnd: Long, width: Int = 360): Result<Bitmap> = withContext(Dispatchers.IO) {

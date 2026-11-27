@@ -9,6 +9,8 @@ import threading
 import time
 from typing import Any
 
+from .desktop_attach import ensure_input_desktop
+
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 try:
@@ -180,6 +182,7 @@ class WindowManager:
         self._saved_geometry: dict[int, dict[str, Any]] = {}
 
     def list_windows(self) -> list[dict[str, Any]]:
+        ensure_input_desktop()
         fg = int(user32.GetForegroundWindow() or 0)
         results: list[dict[str, Any]] = []
 
@@ -259,6 +262,7 @@ class WindowManager:
         return None
 
     def focus_window(self, hwnd: int) -> bool:
+        ensure_input_desktop()
         if not user32.IsWindow(hwnd):
             return False
         if user32.IsIconic(hwnd):
@@ -291,6 +295,7 @@ class WindowManager:
         width: int | None = None,
         height: int | None = None,
     ) -> dict[str, Any]:
+        ensure_input_desktop()
         if not user32.IsWindow(hwnd):
             return {"ok": False, "error": "Window no longer exists"}
 

@@ -17,6 +17,38 @@ namespace KovaUiaHelper
         [DllImport("user32.dll")]
         private static extern bool IsWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool CloseDesktop(IntPtr hDesktop);
+
+        private static IntPtr _attachedDesk = IntPtr.Zero;
+
+        private static void EnsureInputDesktop()
+        {
+            try
+            {
+                IntPtr hDesk = OpenInputDesktop(0, false, 0x01FF);
+                if (hDesk != IntPtr.Zero)
+                {
+                    if (SetThreadDesktop(hDesk))
+                    {
+                        if (_attachedDesk != IntPtr.Zero) CloseDesktop(_attachedDesk);
+                        _attachedDesk = hDesk;
+                    }
+                    else
+                    {
+                        CloseDesktop(hDesk);
+                    }
+                }
+            }
+            catch { }
+        }
+
         private static readonly JavaScriptSerializer Json = new JavaScriptSerializer
         {
             MaxJsonLength = 8 * 1024 * 1024
@@ -40,9 +72,10 @@ namespace KovaUiaHelper
             ControlType.Text
         };
 
-        [STAThread]
+        [MTAThread]
         public static void Main(string[] args)
         {
+            EnsureInputDesktop();
             Console.InputEncoding = Encoding.UTF8;
             Console.OutputEncoding = Encoding.UTF8;
 
@@ -125,6 +158,7 @@ namespace KovaUiaHelper
 
         private static Dictionary<string, object> InspectWindow(long hwndVal, int maxNodes, int budgetMs)
         {
+            EnsureInputDesktop();
             var sw = Stopwatch.StartNew();
             IntPtr hwnd = hwndVal > 0 ? new IntPtr(hwndVal) : GetForegroundWindow();
             if (hwnd == IntPtr.Zero || !IsWindow(hwnd))
@@ -336,6 +370,7 @@ namespace KovaUiaHelper
 
         private static Dictionary<string, object> ExecuteAction(long hwndVal, string runtimeId, string action, string value)
         {
+            EnsureInputDesktop();
             IntPtr hwnd = hwndVal > 0 ? new IntPtr(hwndVal) : GetForegroundWindow();
             if (hwnd == IntPtr.Zero || !IsWindow(hwnd))
             {

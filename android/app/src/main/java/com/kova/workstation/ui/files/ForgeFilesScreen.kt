@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,12 +22,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.CreateNewFolder
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.MoreVert
@@ -41,7 +43,6 @@ import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -59,8 +60,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kova.workstation.data.model.FileEntry
@@ -87,6 +92,7 @@ fun ForgeFilesScreen(
     val context = LocalContext.current
     var showNewFolderDialog by remember { mutableStateOf(false) }
     var showNewFileDialog by remember { mutableStateOf(false) }
+    var showSearchBar by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<FileEntry?>(null) }
     var deleteTarget by remember { mutableStateOf<FileEntry?>(null) }
     var pendingDownloadEntry by remember { mutableStateOf<FileEntry?>(null) }
@@ -159,18 +165,27 @@ fun ForgeFilesScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 1. Pinned Roots & Drives
+        // 1. Sleek Quick Roots Pill Strip
         if (state.fileRoots.isNotEmpty()) {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(state.fileRoots) { root ->
                     val selected = state.currentPath.equals(root.path, ignoreCase = true)
-                    AssistChip(
-                        onClick = { onBrowse(root.path) },
-                        label = { Text(root.label) },
-                        leadingIcon = {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (selected) KovaPalette.Cyan.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(
+                            1.dp,
+                            if (selected) KovaPalette.Cyan.copy(alpha = 0.6f) else Color.Transparent
+                        ),
+                        modifier = Modifier.clickable { onBrowse(root.path) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Icon(
                                 imageVector = when (root.icon) {
                                     "home" -> Icons.Rounded.Home
@@ -179,51 +194,85 @@ fun ForgeFilesScreen(
                                     else -> Icons.Rounded.Folder
                                 },
                                 contentDescription = null,
-                                modifier = Modifier.size(15.dp),
-                                tint = if (selected) KovaPalette.Emerald else KovaPalette.Cyan
+                                modifier = Modifier.size(14.dp),
+                                tint = if (selected) KovaPalette.Cyan else KovaPalette.InkSecondary
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                root.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) KovaPalette.Cyan else MaterialTheme.colorScheme.onSurface
                             )
                         }
-                    )
+                    }
                 }
             }
         }
 
-        // 2. Path Breadcrumb + Up + Actions
+        // 2. Interactive Segmented Breadcrumb Bar + Search & Hidden Toggles
+        val segments = remember(state.currentPath) { parseWindowsBreadcrumbs(state.currentPath) }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
                 onClick = { state.parentPath?.let { onBrowse(it) } },
                 enabled = state.parentPath != null,
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier.size(32.dp)
             ) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Parent folder")
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Up", Modifier.size(18.dp))
             }
-            Text(
-                text = state.currentPath.ifBlank { "Loading..." },
-                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                color = KovaPalette.Cyan,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Row(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable { onCopyPath(state.currentPath) }
-                    .padding(horizontal = 4.dp)
-            )
-            IconButton(onClick = onToggleHidden, modifier = Modifier.size(34.dp)) {
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                segments.forEachIndexed { idx, (label, fullPath) ->
+                    if (idx > 0) {
+                        Icon(
+                            Icons.Rounded.ChevronRight,
+                            null,
+                            tint = KovaPalette.InkMuted,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = if (idx == segments.lastIndex) FontWeight.Bold else FontWeight.Normal
+                        ),
+                        color = if (idx == segments.lastIndex) KovaPalette.Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { onBrowse(fullPath) }
+                            .padding(horizontal = 5.dp, vertical = 4.dp)
+                    )
+                }
+            }
+            IconButton(onClick = { showSearchBar = !showSearchBar; if (!showSearchBar) onSearch("") }, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Rounded.Search,
+                    "Search",
+                    tint = if (showSearchBar) KovaPalette.Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            IconButton(onClick = onToggleHidden, modifier = Modifier.size(32.dp)) {
                 Icon(
                     if (state.showHiddenFiles) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
-                    contentDescription = "Hidden files",
+                    "Hidden files",
+                    tint = if (state.showHiddenFiles) KovaPalette.Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp)
                 )
             }
         }
 
-        // 3. Action Pill Row + Search
+        // 3. Compact Glass Action Bar (Upload, Shell Here, New File/Folder, Git)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -231,46 +280,32 @@ fun ForgeFilesScreen(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (!state.currentGitRoot.isNullOrBlank()) {
-                AssistChip(
-                    onClick = onOpenGit,
-                    label = { Text("Git", color = KovaPalette.Emerald) },
-                    leadingIcon = { Icon(Icons.Rounded.Source, null, Modifier.size(16.dp), tint = KovaPalette.Emerald) }
-                )
+            ForgeActionPill("Upload", Icons.Rounded.UploadFile, KovaPalette.Cyan) {
+                uploadPicker.launch(arrayOf("*/*"))
             }
-            AssistChip(
-                onClick = { onOpenTerminalHere(state.currentPath) },
-                label = { Text("Shell Here") },
-                leadingIcon = { Icon(Icons.Rounded.Terminal, null, Modifier.size(16.dp), tint = KovaPalette.Cyan) }
-            )
-            AssistChip(
-                onClick = { uploadPicker.launch(arrayOf("*/*")) },
-                label = { Text("Upload") },
-                leadingIcon = { Icon(Icons.Rounded.UploadFile, null, Modifier.size(16.dp)) }
-            )
-            AssistChip(
-                onClick = { showNewFileDialog = true },
-                label = { Text("New File") },
-                leadingIcon = { Icon(Icons.Rounded.NoteAdd, null, Modifier.size(16.dp)) }
-            )
-            AssistChip(
-                onClick = { showNewFolderDialog = true },
-                label = { Text("New Folder") },
-                leadingIcon = { Icon(Icons.Rounded.CreateNewFolder, null, Modifier.size(16.dp)) }
-            )
+            ForgeActionPill("Shell Here", Icons.Rounded.Terminal, KovaPalette.Emerald) {
+                onOpenTerminalHere(state.currentPath)
+            }
+            if (!state.currentGitRoot.isNullOrBlank()) {
+                ForgeActionPill("Git", Icons.Rounded.Source, KovaPalette.Violet) { onOpenGit() }
+            }
+            ForgeActionPill("File", Icons.Rounded.NoteAdd, KovaPalette.InkSecondary) { showNewFileDialog = true }
+            ForgeActionPill("Folder", Icons.Rounded.CreateNewFolder, KovaPalette.Amber) { showNewFolderDialog = true }
         }
 
-        OutlinedTextField(
-            value = state.searchQuery,
-            onValueChange = onSearch,
-            placeholder = { Text("Search files in this folder...") },
-            leadingIcon = { Icon(Icons.Rounded.Search, null, Modifier.size(18.dp)) },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp)
-        )
+        if (showSearchBar) {
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = onSearch,
+                placeholder = { Text("Filter or search files...") },
+                leadingIcon = { Icon(Icons.Rounded.Search, null, Modifier.size(18.dp)) },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
 
         if (state.filesLoading) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = KovaPalette.Cyan)
@@ -280,13 +315,13 @@ fun ForgeFilesScreen(
 
         LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (visibleItems.isEmpty() && !state.filesLoading) {
                 item {
                     Text(
-                        "Folder is empty.",
+                        "Empty folder.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(16.dp)
@@ -314,6 +349,29 @@ fun ForgeFilesScreen(
 }
 
 @Composable
+private fun ForgeActionPill(
+    label: String,
+    icon: ImageVector,
+    tint: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = tint.copy(alpha = 0.12f),
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = tint)
+        }
+    }
+}
+
+@Composable
 private fun FileEntryRow(
     entry: FileEntry,
     onClick: () -> Unit,
@@ -324,10 +382,22 @@ private fun FileEntryRow(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
+    val (iconVec, badgeTint) = when {
+        entry.isDir -> Icons.Rounded.Folder to KovaPalette.Amber
+        entry.language in setOf("python", "kotlin", "java", "javascript", "typescript", "csharp", "go", "rust") ->
+            Icons.Rounded.Code to KovaPalette.Cyan
+        entry.language in setOf("json", "yaml", "toml", "xml") ->
+            Icons.Rounded.Code to KovaPalette.Violet
+        entry.language in setOf("powershell", "shell", "batch") ->
+            Icons.Rounded.Terminal to KovaPalette.Emerald
+        entry.language in setOf("log", "markdown") ->
+            Icons.Rounded.Description to KovaPalette.Rose
+        else -> Icons.AutoMirrored.Rounded.InsertDriveFile to KovaPalette.InkSecondary
+    }
+
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -338,25 +408,21 @@ private fun FileEntryRow(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = when {
-                    entry.isDir -> Icons.Rounded.Folder
-                    entry.language !in setOf("text", "binary") -> Icons.Rounded.Code
-                    else -> Icons.AutoMirrored.Rounded.InsertDriveFile
-                },
-                contentDescription = null,
-                tint = when {
-                    entry.isDir -> KovaPalette.Amber
-                    entry.language !in setOf("text", "binary") -> KovaPalette.Cyan
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.size(22.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(badgeTint.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(iconVec, contentDescription = null, tint = badgeTint, modifier = Modifier.size(19.dp))
+            }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = entry.name,
                     style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (entry.isDir) FontWeight.Medium else FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -368,7 +434,7 @@ private fun FileEntryRow(
             }
             Box {
                 IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Rounded.MoreVert, "Actions", Modifier.size(18.dp))
+                    Icon(Icons.Rounded.MoreVert, "Actions", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(text = { Text("Copy Path") }, onClick = { menuOpen = false; onCopyPath() })
@@ -384,6 +450,19 @@ private fun FileEntryRow(
             }
         }
     }
+}
+
+private fun parseWindowsBreadcrumbs(path: String): List<Pair<String, String>> {
+    if (path.isBlank()) return emptyList()
+    val norm = path.replace('/', '\\').trimEnd('\\')
+    val parts = norm.split('\\').filter { it.isNotBlank() }
+    val out = mutableListOf<Pair<String, String>>()
+    var acc = ""
+    parts.forEachIndexed { idx, part ->
+        acc = if (idx == 0) "$part\\" else "${acc.trimEnd('\\')}\\$part"
+        out.add(part to acc)
+    }
+    return out
 }
 
 @Composable

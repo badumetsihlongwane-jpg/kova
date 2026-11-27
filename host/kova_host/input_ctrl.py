@@ -7,6 +7,8 @@ import ctypes.wintypes as wt
 import time
 from typing import TYPE_CHECKING
 
+from .desktop_attach import ensure_input_desktop
+
 if TYPE_CHECKING:
     from .clipboard import ClipboardManager
     from .windows_mgr import WindowManager
@@ -159,12 +161,14 @@ EXTENDED_VKS = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E, 0x5B
 def _send_inputs(items: list[INPUT]) -> int:
     if not items:
         return 0
+    ensure_input_desktop()
     arr = (INPUT * len(items))(*items)
     return int(user32.SendInput(len(items), arr, ctypes.sizeof(INPUT)))
 
 
 class InputController:
     def get_cursor_pos(self) -> tuple[int, int]:
+        ensure_input_desktop()
         pt = wt.POINT()
         if user32.GetCursorPos(ctypes.byref(pt)):
             return int(pt.x), int(pt.y)

@@ -574,6 +574,25 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
         _uiState.update { it.copy(showPromptComposer = visible) }
     }
 
+    fun activateLiveDisplay() {
+        val c = client ?: return
+        viewModelScope.launch {
+            showBanner("Attaching Windows console display...")
+            c.activateDisplay().onSuccess { resp ->
+                if (resp.ok) {
+                    showBanner("Display attached! Refreshing stream...")
+                    delay(400)
+                    refreshWindows(withThumbnails = true)
+                    sendStageConfig()
+                } else {
+                    showBanner(resp.error.ifBlank { "Could not attach console display" })
+                }
+            }.onFailure { err ->
+                showBanner(err.message ?: "Activate display failed")
+            }
+        }
+    }
+
     fun inspectCurrentWindowUia() {
         val c = client ?: return
         val hwnd = if (_uiState.value.stageMode == "window") _uiState.value.stageHwnd ?: 0L else 0L

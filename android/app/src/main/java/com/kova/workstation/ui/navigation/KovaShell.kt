@@ -185,7 +185,8 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                     onOpenControls = { viewModel.setSemanticSheetVisible(true) },
                                     onOpenComposer = { viewModel.setPromptComposerVisible(true) },
                                     onSendKeys = viewModel::sendKeyChord,
-                                    onInvokeUia = viewModel::invokeUiaElement
+                                    onInvokeUia = viewModel::invokeUiaElement,
+                                    onActivateDisplay = viewModel::activateLiveDisplay
                                 )
 
                                 WorkspaceTab.SHELL -> ShellScreen(

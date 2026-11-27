@@ -1,6 +1,9 @@
 package com.kova.workstation.ui.stage
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,11 +33,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CenterFocusStrong
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.ZoomOutMap
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -91,10 +100,12 @@ fun LensStageScreen(
     onOpenControls: () -> Unit,
     onOpenComposer: () -> Unit,
     onSendKeys: (List<String>) -> Unit,
-    onInvokeUia: (UiaElement, String, String) -> Unit
+    onInvokeUia: (UiaElement, String, String) -> Unit,
+    onActivateDisplay: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
     var showWindowMenu by remember { mutableStateOf(false) }
+    var zenMode by remember { mutableStateOf(false) }
 
     val activeWindow = state.windows.firstOrNull { it.hwnd == state.stageHwnd }
     val sourceLabel = when {
@@ -103,7 +114,7 @@ fun LensStageScreen(
         else -> "Full Desktop"
     }
 
-    // Loupe state (pixel-precision magnifier floating above user's thumb)
+    // Loupe & double-tap tracking
     var loupeActive by remember { mutableStateOf(false) }
     var loupeNormX by remember { mutableFloatStateOf(0.5f) }
     var loupeNormY by remember { mutableFloatStateOf(0.5f) }
@@ -113,154 +124,9 @@ fun LensStageScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(KovaPalette.Obsidian)
+            .background(Color.Black)
     ) {
-        // 1. Compact Stage Control Strip
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Box(modifier = Modifier.weight(1f)) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showWindowMenu = true }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Rounded.DesktopWindows,
-                            null,
-                            tint = KovaPalette.Cyan,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = sourceLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Icon(Icons.Rounded.ExpandMore, null, modifier = Modifier.size(16.dp))
-                    }
-                }
-                DropdownMenu(
-                    expanded = showWindowMenu,
-                    onDismissRequest = { showWindowMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Full Desktop") },
-                        onClick = {
-                            showWindowMenu = false
-                            onSelectSource("desktop", null)
-                        }
-                    )
-                    state.windows.forEach { w ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    "${w.title} (${w.process.removeSuffix(".exe")})",
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            onClick = {
-                                showWindowMenu = false
-                                onSelectSource("window", w.hwnd)
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Mobile-Fit one-tap reflow button when staging a window
-            if (state.stageMode == "window" && state.stageHwnd != null) {
-                val isFit = activeWindow?.mobileFit == true
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (isFit) KovaPalette.Emerald.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                    border = BorderStroke(1.dp, if (isFit) KovaPalette.Emerald else MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.clickable {
-                        onWindowAction(state.stageHwnd, if (isFit) "restore_fit" else "mobile_fit")
-                    }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Rounded.PhoneAndroid,
-                            null,
-                            tint = if (isFit) KovaPalette.Emerald else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            if (isFit) "Fit" else "Reflow",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isFit) KovaPalette.Emerald else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-
-            // Reset server-side ROI zoom button when zoomed
-            if (state.stageRoi != null) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = KovaPalette.Cyan.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, KovaPalette.Cyan),
-                    modifier = Modifier.clickable { onSetRoi(null) }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Rounded.ZoomOutMap, null, tint = KovaPalette.Cyan, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("1×", style = MaterialTheme.typography.labelSmall, color = KovaPalette.Cyan)
-                    }
-                }
-            }
-
-            // Semantic X-Ray Overlay Toggle
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (state.stageXRayEnabled) KovaPalette.Amber.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, if (state.stageXRayEnabled) KovaPalette.Amber else MaterialTheme.colorScheme.outline),
-                modifier = Modifier.clickable { onToggleXRay() }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Rounded.CenterFocusStrong,
-                        null,
-                        tint = if (state.stageXRayEnabled) KovaPalette.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        "X-Ray",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (state.stageXRayEnabled) KovaPalette.Amber else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-        }
-
-        // 2. Main Visual Viewport + Gestures + X-Ray Overlay + Loupe
+        // Edge-to-Edge Visual Stage Canvas with Floating Glass Controls
         BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
@@ -279,15 +145,14 @@ fun LensStageScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    CircularProgressIndicator(color = KovaPalette.Cyan)
+                    CircularProgressIndicator(color = KovaPalette.Cyan, strokeWidth = 2.5.dp)
                     Text(
-                        "Streaming live Windows stage...",
+                        "Connecting live Windows display...",
                         style = MaterialTheme.typography.bodySmall,
                         color = KovaPalette.InkSecondary
                     )
                 }
             } else {
-                // Compute exact fitted image rectangle inside the viewport for pixel-perfect coordinate mapping
                 val imgAspect = bmp.width.toFloat() / bmp.height.toFloat().coerceAtLeast(1f)
                 val boxAspect = boxW / boxH
                 val fittedW: Float
@@ -424,7 +289,6 @@ fun LensStageScreen(
                                     }
                                     StageInputMode.DIRECT -> {
                                         if (maxPointers >= 2 && (pinchAccum > 1.25f || pinchAccum < 0.8f)) {
-                                            // Trigger server-side crisp ROI zoom!
                                             val curRoi = state.stageRoi ?: StageRoi(0f, 0f, 1f, 1f)
                                             val newW = (curRoi.w / pinchAccum).coerceIn(0.28f, 1f)
                                             val newH = (curRoi.h / pinchAccum).coerceIn(0.28f, 1f)
@@ -444,7 +308,6 @@ fun LensStageScreen(
                                             }
                                             onMouseClick(sx, sy, if (maxPointers >= 2) "right" else "left", 1)
                                         } else if (maxPointers == 1 && totalDrag > 24f) {
-                                            // Pan ROI smoothly across high-DPI desktop
                                             val cur = state.stageRoi
                                             if (cur != null) {
                                                 val delta = lastPos - startPos
@@ -461,7 +324,7 @@ fun LensStageScreen(
                         }
                 )
 
-                // Semantic X-Ray Hit-Target Chips overlaid directly on live Windows controls!
+                // Semantic X-Ray Hit-Target Chips overlaid directly on live Windows controls
                 if (state.stageXRayEnabled && state.uiaData != null) {
                     val elements = state.uiaData.elements.filter { it.enabled }.take(40)
                     elements.forEach { el ->
@@ -472,8 +335,8 @@ fun LensStageScreen(
                             val chipY = (offsetY + relY * fittedH).roundToInt()
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = if (el.isEditable) KovaPalette.Emerald.copy(alpha = 0.88f)
-                                else KovaPalette.Amber.copy(alpha = 0.9f),
+                                color = if (el.isEditable) KovaPalette.Emerald.copy(alpha = 0.9f)
+                                else KovaPalette.Amber.copy(alpha = 0.92f),
                                 shadowElevation = 4.dp,
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
@@ -499,26 +362,38 @@ fun LensStageScreen(
                     }
                 }
 
-                // Live 120Hz Virtual Cursor Indicator in Trackpad mode (crucial for Single-Window & high-latency networks!)
-                if (state.stageInputMode == StageInputMode.TRACKPAD && meta.sourceWidth > 0 && meta.sourceHeight > 0) {
+                // Crisp 120Hz Virtual Cursor Reticle (hidden when cursor uninitialized at 0,0)
+                if (
+                    state.stageInputMode == StageInputMode.TRACKPAD &&
+                    (meta.cursorX > 0 || meta.cursorY > 0) &&
+                    meta.sourceWidth > 0 && meta.sourceHeight > 0
+                ) {
                     val curRelX = (meta.cursorX - meta.originX).toFloat() / meta.sourceWidth.toFloat()
                     val curRelY = (meta.cursorY - meta.originY).toFloat() / meta.sourceHeight.toFloat()
-                    if (curRelX in 0f..1f && curRelY in 0f..1f) {
+                    if (curRelX in 0.005f..0.995f && curRelY in 0.005f..0.995f) {
                         val cpx = (offsetX + curRelX * fittedW).roundToInt()
                         val cpy = (offsetY + curRelY * fittedH).roundToInt()
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopStart)
-                                .offset { IntOffset(cpx - 10, cpy - 10) }
-                                .size(20.dp)
+                                .offset { IntOffset(cpx - 7, cpy - 7) }
+                                .size(14.dp)
                                 .clip(CircleShape)
-                                .border(2.dp, KovaPalette.Cyan, CircleShape)
-                                .background(KovaPalette.Cyan.copy(alpha = 0.22f))
-                        )
+                                .border(1.5.dp, KovaPalette.Cyan, CircleShape)
+                                .background(KovaPalette.Cyan.copy(alpha = 0.25f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White)
+                            )
+                        }
                     }
                 }
 
-                // Precision 2.4x Magnifying Loupe floating cleanly above the user's thumb!
+                // Precision 2.4x Magnifying Loupe floating cleanly above user's thumb
                 if (loupeActive) {
                     val loupeSizePx = with(density) { 126.dp.toPx() }.roundToInt()
                     val lx = (loupeTouchPx.x - loupeSizePx / 2f).coerceIn(12f, boxW - loupeSizePx - 12f).roundToInt()
@@ -529,7 +404,7 @@ fun LensStageScreen(
                             .offset { IntOffset(lx, ly) }
                             .size(126.dp)
                             .clip(CircleShape)
-                            .border(2.5.dp, KovaPalette.Cyan, CircleShape)
+                            .border(2.dp, KovaPalette.Cyan, CircleShape)
                             .background(Color.Black)
                     ) {
                         LoupeCanvas(bitmap = bmp, normX = loupeNormX, normY = loupeNormY)
@@ -537,23 +412,174 @@ fun LensStageScreen(
                 }
             }
 
-            // Live frame latency / dimensions pill + One-Thumb Quick Scroll pills
-            if (bmp != null) {
+            // Floating Glass Top Bar (Window Picker, Reflow, X-Ray, Zen Fullscreen)
+            AnimatedVisibility(
+                visible = !zenMode,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = KovaPalette.SlateDeep.copy(alpha = 0.84f),
+                            border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.75f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showWindowMenu = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Rounded.DesktopWindows, null, tint = KovaPalette.Cyan, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(7.dp))
+                                Text(
+                                    text = sourceLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = KovaPalette.InkPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(Icons.Rounded.ExpandMore, null, tint = KovaPalette.InkSecondary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        DropdownMenu(expanded = showWindowMenu, onDismissRequest = { showWindowMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Full Desktop") },
+                                onClick = { showWindowMenu = false; onSelectSource("desktop", null) }
+                            )
+                            state.windows.forEach { w ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "${w.title} (${w.process.removeSuffix(".exe")})",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    onClick = { showWindowMenu = false; onSelectSource("window", w.hwnd) }
+                                )
+                            }
+                        }
+                    }
+
+                    if (state.stageMode == "window" && state.stageHwnd != null) {
+                        val isFit = activeWindow?.mobileFit == true
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isFit) KovaPalette.Emerald.copy(alpha = 0.24f) else KovaPalette.SlateDeep.copy(alpha = 0.84f),
+                            border = BorderStroke(1.dp, if (isFit) KovaPalette.Emerald else KovaPalette.BorderDark),
+                            modifier = Modifier.clickable {
+                                onWindowAction(state.stageHwnd, if (isFit) "restore_fit" else "mobile_fit")
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Rounded.PhoneAndroid,
+                                    null,
+                                    tint = if (isFit) KovaPalette.Emerald else KovaPalette.InkPrimary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (isFit) "Fit" else "Reflow",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isFit) KovaPalette.Emerald else KovaPalette.InkPrimary
+                                )
+                            }
+                        }
+                    }
+
+                    if (state.stageRoi != null) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = KovaPalette.Cyan.copy(alpha = 0.2f),
+                            border = BorderStroke(1.dp, KovaPalette.Cyan),
+                            modifier = Modifier.clickable { onSetRoi(null) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Rounded.ZoomOutMap, null, tint = KovaPalette.Cyan, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("1×", style = MaterialTheme.typography.labelSmall, color = KovaPalette.Cyan)
+                            }
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (state.stageXRayEnabled) KovaPalette.Amber.copy(alpha = 0.24f) else KovaPalette.SlateDeep.copy(alpha = 0.84f),
+                        border = BorderStroke(1.dp, if (state.stageXRayEnabled) KovaPalette.Amber else KovaPalette.BorderDark),
+                        modifier = Modifier.clickable { onToggleXRay() }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Rounded.CenterFocusStrong,
+                                null,
+                                tint = if (state.stageXRayEnabled) KovaPalette.Amber else KovaPalette.InkSecondary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "X-Ray",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (state.stageXRayEnabled) KovaPalette.Amber else KovaPalette.InkPrimary
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = KovaPalette.SlateDeep.copy(alpha = 0.84f),
+                        border = BorderStroke(1.dp, KovaPalette.BorderDark),
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clickable { zenMode = true }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.Fullscreen, "Zen Fullscreen", tint = KovaPalette.InkSecondary, modifier = Modifier.size(17.dp))
+                        }
+                    }
+                }
+            }
+
+            // Minimal restore pill when in Zen Fullscreen Mode
+            if (zenMode) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = KovaPalette.Obsidian.copy(alpha = 0.72f),
+                    shape = CircleShape,
+                    color = KovaPalette.SlateDeep.copy(alpha = 0.72f),
+                    border = BorderStroke(1.dp, KovaPalette.BorderDark),
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(8.dp)
+                        .padding(10.dp)
+                        .size(34.dp)
+                        .clickable { zenMode = false }
                 ) {
-                    Text(
-                        text = "${meta.frameWidth}×${meta.frameHeight} · ${meta.captureMs.roundToInt()}ms",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = KovaPalette.InkSecondary,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.FullscreenExit, "Exit Zen", tint = KovaPalette.Cyan, modifier = Modifier.size(18.dp))
+                    }
                 }
+            }
 
+            // Subtle One-Thumb Scroll Pills on right edge
+            if (bmp != null && !zenMode) {
                 Column(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
@@ -562,70 +588,86 @@ fun LensStageScreen(
                 ) {
                     Surface(
                         shape = CircleShape,
-                        color = KovaPalette.SlateCard.copy(alpha = 0.82f),
-                        border = BorderStroke(1.dp, KovaPalette.BorderDark),
+                        color = KovaPalette.SlateDeep.copy(alpha = 0.72f),
+                        border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.7f)),
                         modifier = Modifier
-                            .size(36.dp)
-                            .clickable { onScroll(0, 240) }
+                            .size(34.dp)
+                            .clickable { onScroll(0, 260) }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.KeyboardArrowUp, "Scroll Up", tint = KovaPalette.Cyan, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Rounded.KeyboardArrowUp, "Scroll Up", tint = KovaPalette.Cyan, modifier = Modifier.size(19.dp))
                         }
                     }
                     Surface(
                         shape = CircleShape,
-                        color = KovaPalette.SlateCard.copy(alpha = 0.82f),
-                        border = BorderStroke(1.dp, KovaPalette.BorderDark),
+                        color = KovaPalette.SlateDeep.copy(alpha = 0.72f),
+                        border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.7f)),
                         modifier = Modifier
-                            .size(36.dp)
-                            .clickable { onScroll(0, -240) }
+                            .size(34.dp)
+                            .clickable { onScroll(0, -260) }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.KeyboardArrowDown, "Scroll Down", tint = KovaPalette.Cyan, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Rounded.KeyboardArrowDown, "Scroll Down", tint = KovaPalette.Cyan, modifier = Modifier.size(19.dp))
                         }
                     }
                 }
             }
 
-            // Actionable VPS Blank-Session Warning
+            // Actionable Blank-Frame Recovery Card with One-Tap Activate Live Display!
             if (!state.stageWarning.isNullOrBlank()) {
                 Card(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(12.dp)
+                        .padding(14.dp)
                         .fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = KovaPalette.SlateCard.copy(alpha = 0.95f)),
-                    border = BorderStroke(1.dp, KovaPalette.Amber)
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = KovaPalette.SlateCard.copy(alpha = 0.96f)),
+                    border = BorderStroke(1.dp, KovaPalette.Amber.copy(alpha = 0.75f))
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Icon(Icons.Rounded.WarningAmber, null, tint = KovaPalette.Amber, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = state.stageWarning,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = KovaPalette.InkPrimary
-                        )
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.Top) {
+                            Icon(Icons.Rounded.WarningAmber, null, tint = KovaPalette.Amber, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = state.stageWarning,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = KovaPalette.InkPrimary
+                            )
+                        }
+                        Button(
+                            onClick = onActivateDisplay,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = KovaPalette.Amber,
+                                contentColor = KovaPalette.Obsidian
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Activate Live Console Display", fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }
         }
 
-        // 3. Bottom One-Thumb Controls & Shortcut Chord Bar
-        ModifierChordBar(
-            inputMode = state.stageInputMode,
-            dragLocked = state.stageDragLocked,
-            hapticsEnabled = state.preferences.hapticsEnabled,
-            onModeChange = onModeChange,
-            onLeftClick = { onMouseClick(null, null, "left", 1) },
-            onRightClick = { onMouseClick(null, null, "right", 1) },
-            onToggleDragLock = onToggleDragLock,
-            onOpenComposer = onOpenComposer,
-            onOpenControls = onOpenControls,
-            onSendKeys = onSendKeys
-        )
+        // Calm Single-Row Bottom Action Dock (hidden in Zen Fullscreen)
+        AnimatedVisibility(visible = !zenMode) {
+            ModifierChordBar(
+                inputMode = state.stageInputMode,
+                dragLocked = state.stageDragLocked,
+                hapticsEnabled = state.preferences.hapticsEnabled,
+                onModeChange = onModeChange,
+                onLeftClick = { onMouseClick(null, null, "left", 1) },
+                onRightClick = { onMouseClick(null, null, "right", 1) },
+                onToggleDragLock = onToggleDragLock,
+                onOpenComposer = onOpenComposer,
+                onOpenControls = onOpenControls,
+                onSendKeys = onSendKeys
+            )
+        }
     }
 }
 
@@ -649,11 +691,10 @@ private fun LoupeCanvas(bitmap: Bitmap, normX: Float, normY: Float) {
             dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
         )
 
-        // Precision cyan crosshair at exact target pixel
         val midX = size.width / 2f
         val midY = size.height / 2f
-        drawLine(KovaPalette.Cyan, Offset(midX - 18f, midY), Offset(midX + 18f, midY), strokeWidth = 2.5f)
-        drawLine(KovaPalette.Cyan, Offset(midX, midY - 18f), Offset(midX, midY + 18f), strokeWidth = 2.5f)
-        drawCircle(KovaPalette.Cyan, radius = 6f, center = Offset(midX, midY), style = Stroke(width = 2f))
+        drawLine(KovaPalette.Cyan, Offset(midX - 18f, midY), Offset(midX + 18f, midY), strokeWidth = 2f)
+        drawLine(KovaPalette.Cyan, Offset(midX, midY - 18f), Offset(midX, midY + 18f), strokeWidth = 2f)
+        drawCircle(KovaPalette.Cyan, radius = 6f, center = Offset(midX, midY), style = Stroke(width = 1.8f))
     }
 }

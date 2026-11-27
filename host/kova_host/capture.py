@@ -12,6 +12,7 @@ from typing import Any
 
 from PIL import Image
 
+from .desktop_attach import ensure_input_desktop
 from .windows_mgr import get_window_rect
 
 user32 = ctypes.windll.user32
@@ -194,6 +195,7 @@ class ScreenCapturer:
         crop_rect: tuple[int, int, int, int] | None = None,
         draw_cursor: bool = True,
     ) -> tuple[Image.Image, bytes, dict[str, Any]]:
+        ensure_input_desktop()
         vx = user32.GetSystemMetrics(76)
         vy = user32.GetSystemMetrics(77)
         vw = user32.GetSystemMetrics(78) or user32.GetSystemMetrics(0)
@@ -246,6 +248,7 @@ class ScreenCapturer:
         return img, raw, meta
 
     def capture_window_raw(self, hwnd: int, draw_cursor: bool = True) -> tuple[Image.Image, bytes, dict[str, Any]]:
+        ensure_input_desktop()
         if not user32.IsWindow(hwnd):
             raise RuntimeError("Target window closed")
 

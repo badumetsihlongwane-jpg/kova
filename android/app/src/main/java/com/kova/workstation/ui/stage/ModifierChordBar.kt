@@ -1,5 +1,8 @@
 package com.kova.workstation.ui.stage
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CenterFocusStrong
 import androidx.compose.material.icons.rounded.DragIndicator
+import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Mouse
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.ZoomIn
@@ -26,6 +30,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,7 +57,7 @@ private val DESKTOP_SHORTCUTS = listOf(
     QuickKey("Ctrl+V", listOf("ctrl", "v")),
     QuickKey("Ctrl+Z", listOf("ctrl", "z")),
     QuickKey("Ctrl+S", listOf("ctrl", "s")),
-    QuickKey("Cmd Pal", listOf("ctrl", "shift", "p")),
+    QuickKey("Cmd+P", listOf("ctrl", "shift", "p")),
     QuickKey("Alt+Tab", listOf("alt", "tab")),
     QuickKey("Win", listOf("win")),
     QuickKey("↑", listOf("up")),
@@ -74,169 +82,168 @@ fun ModifierChordBar(
     onSendKeys: (List<String>) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
+    var showKeysDrawer by remember { mutableStateOf(false) }
+
+    val nextMode = when (inputMode) {
+        StageInputMode.TRACKPAD -> StageInputMode.LOUPE
+        StageInputMode.LOUPE -> StageInputMode.DIRECT
+        StageInputMode.DIRECT -> StageInputMode.TRACKPAD
+    }
+    val (modeLabel, modeIcon) = when (inputMode) {
+        StageInputMode.TRACKPAD -> "Pad" to Icons.Rounded.Mouse
+        StageInputMode.LOUPE -> "Loupe" to Icons.Rounded.ZoomIn
+        StageInputMode.DIRECT -> "Touch" to Icons.Rounded.TouchApp
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .background(KovaPalette.SlateDeep.copy(alpha = 0.96f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Row 1: Primary one-thumb interaction controls
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // Expandable compact shortcut & mouse-button drawer (keeps default canvas clutter-free!)
+        AnimatedVisibility(
+            visible = showKeysDrawer || dragLocked,
+            enter = expandVertically(),
+            exit = shrinkVertically()
         ) {
-            ModePill(
-                label = "Pad",
-                icon = Icons.Rounded.Mouse,
-                selected = inputMode == StageInputMode.TRACKPAD,
-                onClick = { onModeChange(StageInputMode.TRACKPAD) },
-                modifier = Modifier.weight(1f)
-            )
-            ModePill(
-                label = "Loupe",
-                icon = Icons.Rounded.ZoomIn,
-                selected = inputMode == StageInputMode.LOUPE,
-                onClick = { onModeChange(StageInputMode.LOUPE) },
-                modifier = Modifier.weight(1f)
-            )
-            ModePill(
-                label = "Touch",
-                icon = Icons.Rounded.TouchApp,
-                selected = inputMode == StageInputMode.DIRECT,
-                onClick = { onModeChange(StageInputMode.DIRECT) },
-                modifier = Modifier.weight(1f)
-            )
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = KovaPalette.Cyan.copy(alpha = 0.16f),
-                border = BorderStroke(1.dp, KovaPalette.Cyan.copy(alpha = 0.5f)),
+            Row(
                 modifier = Modifier
-                    .weight(1.1f)
-                    .clickable {
-                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onOpenComposer()
-                    }
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(bottom = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Rounded.AutoAwesome, null, tint = KovaPalette.Cyan, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Type", style = MaterialTheme.typography.labelMedium, color = KovaPalette.Cyan)
+                KeyChip("L-Click", accent = KovaPalette.Emerald) {
+                    if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onLeftClick()
                 }
-            }
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = KovaPalette.Amber.copy(alpha = 0.14f),
-                border = BorderStroke(1.dp, KovaPalette.Amber.copy(alpha = 0.45f)),
-                modifier = Modifier
-                    .weight(1.1f)
-                    .clickable { onOpenControls() }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+                KeyChip("R-Click", accent = KovaPalette.Violet) {
+                    if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onRightClick()
+                }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (dragLocked) KovaPalette.Rose.copy(alpha = 0.24f) else KovaPalette.SlateCard,
+                    border = BorderStroke(1.dp, if (dragLocked) KovaPalette.Rose else KovaPalette.BorderDark),
+                    modifier = Modifier.clickable {
+                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onToggleDragLock()
+                    }
                 ) {
-                    Icon(Icons.Rounded.CenterFocusStrong, null, tint = KovaPalette.Amber, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("UI", style = MaterialTheme.typography.labelMedium, color = KovaPalette.Amber)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.DragIndicator,
+                            null,
+                            modifier = Modifier.size(14.dp),
+                            tint = if (dragLocked) KovaPalette.Rose else KovaPalette.InkSecondary
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            if (dragLocked) "Dragging" else "Drag",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (dragLocked) KovaPalette.Rose else KovaPalette.InkPrimary
+                        )
+                    }
+                }
+
+                DESKTOP_SHORTCUTS.forEach { key ->
+                    KeyChip(key.label) {
+                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSendKeys(key.keys)
+                    }
                 }
             }
         }
 
-        // Row 2: Mouse clicks + Drag Lock + Scrollable Windows shortcuts
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // Clean, Calm Single-Row Primary Dock
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = KovaPalette.SlateCard,
+            border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.7f)),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            KeyChip("L-Click", accent = KovaPalette.Emerald) {
-                if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onLeftClick()
-            }
-            KeyChip("R-Click", accent = KovaPalette.Violet) {
-                if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onRightClick()
-            }
-            Surface(
-                shape = RoundedCornerShape(9.dp),
-                color = if (dragLocked) KovaPalette.Rose.copy(alpha = 0.24f) else MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, if (dragLocked) KovaPalette.Rose else MaterialTheme.colorScheme.outline),
-                modifier = Modifier.clickable {
-                    if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onToggleDragLock()
-                }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Rounded.DragIndicator,
-                        null,
-                        modifier = Modifier.size(14.dp),
-                        tint = if (dragLocked) KovaPalette.Rose else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.width(3.dp))
-                    Text(
-                        if (dragLocked) "Dragging" else "Drag",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (dragLocked) KovaPalette.Rose else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-
-            DESKTOP_SHORTCUTS.forEach { key ->
-                KeyChip(key.label) {
-                    if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onSendKeys(key.keys)
-                }
+                DockAction(
+                    label = modeLabel,
+                    icon = modeIcon,
+                    tint = KovaPalette.Cyan,
+                    selected = true,
+                    onClick = {
+                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onModeChange(nextMode)
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                DockAction(
+                    label = "Type",
+                    icon = Icons.Rounded.AutoAwesome,
+                    tint = KovaPalette.Emerald,
+                    selected = false,
+                    onClick = {
+                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onOpenComposer()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                DockAction(
+                    label = "Controls",
+                    icon = Icons.Rounded.CenterFocusStrong,
+                    tint = KovaPalette.Amber,
+                    selected = false,
+                    onClick = onOpenControls,
+                    modifier = Modifier.weight(1.1f)
+                )
+                DockAction(
+                    label = "Keys",
+                    icon = Icons.Rounded.Keyboard,
+                    tint = if (showKeysDrawer) KovaPalette.Cyan else KovaPalette.InkSecondary,
+                    selected = showKeysDrawer,
+                    onClick = { showKeysDrawer = !showKeysDrawer },
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ModePill(
+private fun DockAction(
     label: String,
     icon: ImageVector,
+    tint: Color,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(
-            1.dp,
-            if (selected) KovaPalette.Cyan else MaterialTheme.colorScheme.outline
-        )
+        shape = RoundedCornerShape(11.dp),
+        color = if (selected) tint.copy(alpha = 0.14f) else Color.Transparent
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                icon,
-                null,
-                modifier = Modifier.size(14.dp),
-                tint = if (selected) KovaPalette.Cyan else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(4.dp))
+            Icon(icon, null, modifier = Modifier.size(16.dp), tint = tint)
+            Spacer(Modifier.width(5.dp))
             Text(
-                label,
+                text = label,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (selected) KovaPalette.Cyan else MaterialTheme.colorScheme.onSurface
+                color = if (selected) tint else KovaPalette.InkPrimary,
+                maxLines = 1
             )
         }
     }
@@ -249,9 +256,9 @@ private fun KeyChip(
     onClick: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(9.dp),
-        color = accent?.copy(alpha = 0.14f) ?: MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.dp, accent?.copy(alpha = 0.45f) ?: MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(10.dp),
+        color = accent?.copy(alpha = 0.14f) ?: KovaPalette.SlateCard,
+        border = BorderStroke(1.dp, accent?.copy(alpha = 0.35f) ?: KovaPalette.BorderDark),
         modifier = Modifier.clickable(onClick = onClick)
     ) {
         Text(
@@ -260,7 +267,7 @@ private fun KeyChip(
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Medium
             ),
-            color = accent ?: MaterialTheme.colorScheme.onSurface,
+            color = accent ?: KovaPalette.InkPrimary,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
         )
     }
