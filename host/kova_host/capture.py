@@ -273,11 +273,10 @@ class ScreenCapturer:
                     cursor_pos = _draw_cursor_on_dc(mem_dc, left, top)
                 img, raw = _extract_pil_from_bitmap(mem_dc, hbmp, w, h)
             elif draw_cursor:
-                # Re-overlay live cursor if inside window bounds
-                ci = CURSORINFO()
-                ci.cbSize = ctypes.sizeof(CURSORINFO)
-                if user32.GetCursorInfo(ctypes.byref(ci)):
-                    cursor_pos = (int(ci.ptScreenPos.x), int(ci.ptScreenPos.y))
+                # Draw live Windows cursor onto PrintWindow buffer when cursor is over this window
+                cursor_pos = _draw_cursor_on_dc(mem_dc, left, top)
+                if cursor_pos and left <= cursor_pos[0] <= right and top <= cursor_pos[1] <= bottom:
+                    img, raw = _extract_pil_from_bitmap(mem_dc, hbmp, w, h)
         finally:
             gdi32.SelectObject(mem_dc, old)
             gdi32.DeleteObject(hbmp)

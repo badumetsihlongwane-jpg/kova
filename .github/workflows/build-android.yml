@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -45,6 +45,21 @@ jobs:
           cp android/app/build/outputs/apk/release/*.apk dist-apk/Kova-release.apk
           cp android/app/build/outputs/apk/debug/*.apk dist-apk/Kova-debug.apk
           ls -lh dist-apk/
+
+      - name: Verify APK launchable activity & manifest badging
+        run: |
+          AAPT2=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name aapt2 | sort -V | tail -n 1)
+          echo "Using aapt2: $AAPT2"
+          for apk in dist-apk/Kova-release.apk dist-apk/Kova-debug.apk; do
+            echo "=== Checking $apk ==="
+            BADGING=$("$AAPT2" dump badging "$apk")
+            echo "$BADGING" | grep -E "^(package:|application-label:|launchable-activity:)"
+            if ! echo "$BADGING" | grep -q "launchable-activity: name='com.kova.workstation.MainActivity'"; then
+              echo "ERROR: $apk is missing launchable-activity com.kova.workstation.MainActivity!"
+              exit 1
+            fi
+          done
+          echo "All APKs verified launchable!"
 
       - name: Upload Kova Android APKs
         uses: actions/upload-artifact@v4

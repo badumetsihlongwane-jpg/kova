@@ -11,6 +11,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.kova.workstation.KovaApp
 import com.kova.workstation.MainActivity
+import com.kova.workstation.R
 
 class WorkstationService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -53,7 +54,7 @@ class WorkstationService : Service() {
         )
 
         return NotificationCompat.Builder(this, KovaApp.CHANNEL_WORKSTATION)
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setSmallIcon(R.drawable.ic_stat_kova)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setOngoing(true)

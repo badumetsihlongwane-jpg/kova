@@ -1,4 +1,4 @@
-"""CLI entrypoint for Kova Windows Host Agent."""
+"""CLI & GUI entrypoint for Kova Windows Host Agent."""
 
 from __future__ import annotations
 
@@ -128,10 +128,14 @@ async def _run_server(args: argparse.Namespace) -> None:
 
 
 def cli(argv: list[str] | None = None) -> None:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
-        prog="kova-host",
+        prog="KovaHost",
         description="Kova Mobile-First Semantic Windows Remote Workstation Host Agent",
     )
+    parser.add_argument("--gui", action="store_true", help="Launch the Windows Control Center GUI window")
+    parser.add_argument("--cli", action="store_true", help="Run in headless terminal/CLI mode")
+    parser.add_argument("--version", action="store_true", help="Print version and exit")
     parser.add_argument("--host", default=None, help="Bind interface (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=None, help="Listen port (default: 8765)")
     parser.add_argument(
@@ -144,7 +148,22 @@ def cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--regen-cert", action="store_true", help="Regenerate self-signed TLS certificate")
     parser.add_argument("--no-qr", action="store_true", help="Skip printing terminal QR code")
     parser.add_argument("--print-pairing", action="store_true", help="Print pairing URI/QR and exit")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_args)
+
+    if args.version:
+        print(f"KovaHost {__version__}")
+        return
+
+    # Double-clicking KovaHost.exe (frozen with zero CLI args) opens the Control Center GUI automatically!
+    want_gui = args.gui or (getattr(sys, "frozen", False) and not raw_args and not args.cli and not args.print_pairing)
+    if want_gui:
+        try:
+            from .gui import run_gui
+
+            run_gui(port=args.port, public_host=args.public_host, no_tls=args.no_tls)
+            return
+        except Exception as exc:
+            print(f"[WARN] Could not launch GUI ({exc}); falling back to CLI mode.")
 
     try:
         asyncio.run(_run_server(args))

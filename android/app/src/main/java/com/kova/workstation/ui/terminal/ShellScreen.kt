@@ -113,6 +113,7 @@ fun ShellScreen(
     var showSnippets by remember { mutableStateOf(false) }
     var showAddSnippet by remember { mutableStateOf(false) }
     var ctrlSticky by remember { mutableStateOf(false) }
+    var directKeyMode by remember { mutableStateOf(false) }
     var commandInput by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
@@ -427,33 +428,74 @@ fun ShellScreen(
             }
         }
 
-        // 4. Native Mobile Command Composer Bar (Zero Autocorrect Friction + Instant Run!)
+        // 4. Dual-Mode Mobile Input Bar: Cmd (compose full command) vs Direct (live keystrokes for vim/TUIs!)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (directKeyMode) KovaPalette.Emerald.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                border = BorderStroke(1.dp, if (directKeyMode) KovaPalette.Emerald else MaterialTheme.colorScheme.outline),
+                modifier = Modifier
+                    .height(48.dp)
+                    .clickable {
+                        directKeyMode = !directKeyMode
+                        commandInput = if (directKeyMode) " " else ""
+                    }
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp)) {
+                    Text(
+                        text = if (directKeyMode) "RAW" else "CMD",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (directKeyMode) KovaPalette.Emerald else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
             OutlinedTextField(
                 value = commandInput,
                 onValueChange = { next ->
-                    if (ctrlSticky && next.length == 1) {
-                        val ch = next[0].uppercaseChar()
-                        if (ch in 'A'..'Z') {
-                            val ctrlChar = (ch.code - 64).toChar().toString()
+                    if (ctrlSticky && next.isNotEmpty()) {
+                        val lastCh = next.last().uppercaseChar()
+                        if (lastCh in 'A'..'Z') {
+                            val ctrlChar = (lastCh.code - 64).toChar().toString()
                             onSendInput(ctrlChar)
                             ctrlSticky = false
-                            commandInput = ""
+                            commandInput = if (directKeyMode) " " else ""
                             return@OutlinedTextField
                         }
                     }
-                    commandInput = next
+                    if (directKeyMode) {
+                        when {
+                            next.isEmpty() -> {
+                                // Backspace pressed in RAW mode
+                                onSendInput("\u007F")
+                                commandInput = " "
+                            }
+                            next.length > commandInput.length -> {
+                                val added = next.substring(commandInput.length)
+                                onSendInput(added.replace("\n", "\r"))
+                                commandInput = " "
+                            }
+                            else -> commandInput = " "
+                        }
+                    } else {
+                        commandInput = next
+                    }
                 },
                 placeholder = {
                     Text(
-                        if (ctrlSticky) "Type letter for Ctrl+<key>..." else "Type command & press Enter...",
+                        when {
+                            ctrlSticky -> "Type letter for Ctrl+<key>..."
+                            directKeyMode -> "Live raw keystrokes (vim / TUI)..."
+                            else -> "Type command & press Enter..."
+                        },
                         style = MaterialTheme.typography.bodySmall
                     )
                 },
@@ -462,8 +504,13 @@ fun ShellScreen(
                 keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(
                     onSend = {
-                        onSendInput("$commandInput\r")
-                        commandInput = ""
+                        if (directKeyMode) {
+                            onSendInput("\r")
+                            commandInput = " "
+                        } else {
+                            onSendInput("$commandInput\r")
+                            commandInput = ""
+                        }
                     }
                 ),
                 shape = RoundedCornerShape(12.dp),
@@ -478,8 +525,13 @@ fun ShellScreen(
                         if (state.preferences.hapticsEnabled) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
-                        onSendInput("$commandInput\r")
-                        commandInput = ""
+                        if (directKeyMode) {
+                            onSendInput("\r")
+                            commandInput = " "
+                        } else {
+                            onSendInput("$commandInput\r")
+                            commandInput = ""
+                        }
                     }
             ) {
                 Box(contentAlignment = Alignment.Center) {

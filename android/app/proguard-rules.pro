@@ -1,6 +1,7 @@
-# Keep Kotlinx Serialization generated serializers
--keepattributes *Annotation*, InnerClasses
+# Keep Kotlinx Serialization models & generated serializers intact under R8
+-keepattributes *Annotation*, InnerClasses, EnclosingMethod, Signature
 -dontnote kotlinx.serialization.AnnotationsKt
+-keep class com.kova.workstation.data.model.** { *; }
 -keepclassmembers class kotlinx.serialization.json.** {
     *** Companion;
 }

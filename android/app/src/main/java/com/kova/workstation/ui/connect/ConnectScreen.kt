@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Lock
@@ -262,6 +263,21 @@ fun ConnectScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
+                            IconButton(onClick = {
+                                name = profile.name
+                                host = profile.host
+                                port = profile.port.toString()
+                                token = profile.token
+                                fingerprint = profile.certFingerprint
+                                tlsEnabled = profile.tlsEnabled
+                            }) {
+                                Icon(
+                                    Icons.Rounded.Edit,
+                                    contentDescription = "Edit",
+                                    tint = KovaPalette.Cyan,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                             IconButton(onClick = { onDeleteProfile(profile.id) }) {
                                 Icon(
                                     Icons.Rounded.DeleteOutline,
@@ -297,7 +313,21 @@ fun ConnectScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = host,
-                        onValueChange = { host = it.trim() },
+                        onValueChange = { raw ->
+                            val clean = raw.trim()
+                                .removePrefix("https://")
+                                .removePrefix("http://")
+                                .removePrefix("wss://")
+                                .removePrefix("ws://")
+                                .substringBefore("/")
+                            if (clean.contains(":") && !clean.contains("[")) {
+                                val parts = clean.split(":")
+                                host = parts[0]
+                                parts.getOrNull(1)?.filter(Char::isDigit)?.takeIf { it.isNotEmpty() }?.let { port = it }
+                            } else {
+                                host = clean
+                            }
+                        },
                         label = { Text("Host / Tailscale IP / Domain") },
                         placeholder = { Text("100.x.y.z or vps.domain.com") },
                         singleLine = true,
@@ -405,26 +435,16 @@ fun ConnectScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            "1. On your Windows VPS, run kova-host.exe (from GitHub Releases) or host\\scripts\\install.ps1.",
+                            "1. Extract kova-host-windows-x64.zip on your Windows VPS and double-click KovaHost.exe — a Control Center window opens immediately with a large scannable QR code.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            "2. Recommended networking: install Tailscale on both your VPS and Android phone (zero firewall port exposure), then pass --public-host <tailscale-ip>.",
+                            "2. Recommended: install Tailscale on both your VPS and Android phone (zero port forwarding), or click 'Open Firewall Port 8765' inside KovaHost.exe for direct VPS IP access.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            "3. Scan the QR code shown in PowerShell or paste the kova://connect?... link above.",
+                            "3. Tap Scan QR above (or click Copy Pairing Link in KovaHost.exe and tap Paste URI).",
                             style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            "powershell -ExecutionPolicy Bypass -File .\\host\\scripts\\install.ps1 -OpenFirewall",
-                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                            color = KovaPalette.Cyan,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(KovaPalette.Obsidian)
-                                .padding(10.dp)
                         )
                     }
                 }

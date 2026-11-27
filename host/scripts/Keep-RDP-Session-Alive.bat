@@ -1,0 +1,3 @@
+@echo off
+echo Transferring active RDP session to local VPS console so GUI rendering stays alive...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"%~dp0keep-session-alive.ps1\"'"

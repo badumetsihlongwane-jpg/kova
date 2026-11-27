@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   windows-host:
-    name: Test & Package kova-host.exe
+    name: Test & Package KovaHost.exe
     runs-on: windows-latest
 
     steps:
@@ -50,16 +50,56 @@ jobs:
             "/r:C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Web.Extensions.dll" `
             kova_host\uia_helper.cs
 
-      - name: Build standalone kova-host.exe with PyInstaller
+      - name: Build standalone KovaHost.exe with PyInstaller
         working-directory: host
         run: |
-          pyinstaller --onefile --name kova-host `
+          pyinstaller --noconfirm --onedir --name KovaHost `
+            --collect-submodules kova_host `
+            --hidden-import PIL._tkinter_finder `
             --add-data "kova_host\uia_helper.cs;kova_host" `
-            kova_host\main.py
-          Copy-Item dist\kova-host.exe dist-package\kova-host.exe
-          Copy-Item scripts\install.ps1 dist-package\install.ps1
+            launcher.py
+          Copy-Item -Recurse -Force dist\KovaHost\* dist-package\
+          Copy-Item scripts\Start-Kova-CLI.bat dist-package\Start-Kova-CLI.bat
+          Copy-Item scripts\Open-Firewall-Port.bat dist-package\Open-Firewall-Port.bat
+          Copy-Item scripts\Keep-RDP-Session-Alive.bat dist-package\Keep-RDP-Session-Alive.bat
           Copy-Item scripts\keep-session-alive.ps1 dist-package\keep-session-alive.ps1
+          Copy-Item scripts\README-WINDOWS.txt dist-package\README-WINDOWS.txt
           Compress-Archive -Path dist-package\* -DestinationPath ..\kova-host-windows-x64.zip -Force
+
+      - name: Smoke-test extracted KovaHost.exe in isolated directory
+        run: |
+          $smokeDir = "C:\Temp\kova-host-smoke"
+          if (Test-Path $smokeDir) { Remove-Item -Recurse -Force $smokeDir }
+          Expand-Archive -Path kova-host-windows-x64.zip -DestinationPath $smokeDir
+          $exe = Join-Path $smokeDir "KovaHost.exe"
+          $env:KOVA_CONFIG_DIR = Join-Path $smokeDir "cfg"
+
+          $ver = & $exe --version
+          Write-Host "Version output: $ver"
+          if ($LASTEXITCODE -ne 0 -or $ver -notlike "KovaHost *") { throw "Version smoke test failed!" }
+
+          $pair = & $exe --print-pairing --no-qr | Out-String
+          if ($LASTEXITCODE -ne 0 -or $pair -notmatch "kova://connect\?") { throw "Pairing smoke test failed!" }
+
+          $proc = Start-Process -FilePath $exe -ArgumentList "--cli","--port","18765","--no-tls","--no-qr" -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 20; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18765/api/health" -TimeoutSec 2
+                if ($resp.ok -eq $true) {
+                  Write-Host "Live /api/health verified: $($resp | ConvertTo-Json -Compress)"
+                  $ok = $true
+                  break
+                }
+              } catch {}
+            }
+            if (-not $ok) { throw "KovaHost.exe failed to respond on /api/health!" }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+          Write-Host "KovaHost.exe smoke test PASSED!"
 
       - name: Upload Windows Host Package
         uses: actions/upload-artifact@v4

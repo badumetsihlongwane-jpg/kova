@@ -27,6 +27,7 @@ import com.kova.workstation.data.network.PairingUriParser
 import com.kova.workstation.data.storage.ProfileStore
 import com.kova.workstation.service.WorkstationService
 import com.kova.workstation.ui.terminal.AnsiTerminalBuffer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -232,11 +233,22 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
                 loadInitialFiles()
                 syncTerminals()
             }.onFailure { err ->
+                val raw = err.message.orEmpty()
+                val friendly = when {
+                    raw.contains("401") -> "Authentication rejected (HTTP 401). Re-scan the QR code from KovaHost.exe to update your token."
+                    raw.contains("pin mismatch", ignoreCase = true) || raw.contains("CertPath", ignoreCase = true) ->
+                        "TLS certificate changed or did not match the pinned fingerprint. Re-scan the QR code in KovaHost.exe."
+                    raw.contains("timeout", ignoreCase = true) || raw.contains("failed to connect", ignoreCase = true) ->
+                        "Could not reach ${profile.host}:${profile.port}. Ensure KovaHost.exe is running and TCP ${profile.port} is open (or use Tailscale)."
+                    raw.contains("Unable to resolve host", ignoreCase = true) ->
+                        "Cannot resolve '${profile.host}'. Check the IP/hostname and your network connection."
+                    else -> raw.ifBlank { "Unable to connect to ${profile.host}:${profile.port}" }
+                }
                 _uiState.update {
                     it.copy(
                         connecting = false,
                         connected = false,
-                        connectionError = err.message ?: "Unable to connect to ${profile.host}:${profile.port}"
+                        connectionError = friendly
                     )
                 }
             }
@@ -466,9 +478,13 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
 
     fun copyToAndroidClipboard(text: String, silent: Boolean = false) {
         if (text.isBlank()) return
-        val cm = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        cm?.setPrimaryClip(ClipData.newPlainText("Kova", text))
-        if (!silent) showBanner("Copied to phone clipboard")
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+            runCatching {
+                val cm = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                cm?.setPrimaryClip(ClipData.newPlainText("Kova", text))
+            }
+            if (!silent) showBanner("Copied to phone clipboard")
+        }
     }
 
     // ---------- Lens Visual Stage & Semantic UIA ----------
@@ -606,6 +622,13 @@ class WorkstationViewModel(application: Application) : AndroidViewModel(applicat
 
     fun sendMouseMoveRel(dx: Int, dy: Int) {
         if (dx == 0 && dy == 0) return
+        // Optimistic local cursor prediction for 120Hz visual smoothness on cellular networks
+        _uiState.update { state ->
+            val m = state.stageMeta
+            val nx = (m.cursorX + dx).coerceIn(m.fullX, m.fullX + m.fullWidth.coerceAtLeast(1))
+            val ny = (m.cursorY + dy).coerceIn(m.fullY, m.fullY + m.fullHeight.coerceAtLeast(1))
+            state.copy(stageMeta = m.copy(cursorX = nx, cursorY = ny))
+        }
         stageWs?.send(buildJsonObject {
             put("type", "mouse_rel")
             put("dx", dx)

@@ -35,12 +35,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full wire protocol and 
 1. Open this repository's **Actions** tab -> latest **Build Android APK** workflow run.
 2. Download the `kova-android-apks` artifact and install `Kova-release.apk` on your Android phone.
 
-### 2. Run `kova-host` on your Windows VPS / PC
-**Option A — Standalone Executable (No Python needed):**
-Download `kova-host-windows-x64.zip` from the latest **Build Windows Host Agent** GitHub Actions artifact, extract it, and run:
-```powershell
-.\kova-host.exe --public-host <YOUR_TAILSCALE_OR_VPS_IP>
-```
+### 2. Run `KovaHost.exe` on your Windows VPS / PC
+**Option A — Standalone Windows Control Center (No Python needed):**
+1. Download **`kova-host-windows-x64.zip`** from [Releases](../../releases) and **extract all files** into a folder (e.g., `C:\KovaHost`).
+2. Double-click **`KovaHost.exe`** — a native dark-mode Control Center opens immediately with a large scannable QR code, **Detect Public IP**, **Copy Pairing Link**, **Open Firewall (TCP 8765)**, and **Keep RDP GUI Alive** buttons.
+   - Prefer terminal mode? Double-click **`Start-Kova-CLI.bat`** or run `.\KovaHost.exe --cli --public-host <YOUR_IP>`.
 
 **Option B — From Source (Python 3.10+):**
 ```powershell

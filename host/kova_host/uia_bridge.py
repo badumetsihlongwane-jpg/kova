@@ -24,6 +24,9 @@ def _source_path() -> Path:
         candidate = Path(sys._MEIPASS) / "kova_host" / "uia_helper.cs"
         if candidate.exists():
             return candidate
+        alt = Path(sys.executable).resolve().parent / "_internal" / "kova_host" / "uia_helper.cs"
+        if alt.exists():
+            return alt
     return Path(__file__).resolve().parent / "uia_helper.cs"
 
 

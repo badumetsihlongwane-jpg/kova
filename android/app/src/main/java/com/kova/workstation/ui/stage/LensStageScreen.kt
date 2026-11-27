@@ -29,6 +29,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CenterFocusStrong
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.ZoomOutMap
@@ -106,6 +108,7 @@ fun LensStageScreen(
     var loupeNormX by remember { mutableFloatStateOf(0.5f) }
     var loupeNormY by remember { mutableFloatStateOf(0.5f) }
     var loupeTouchPx by remember { mutableStateOf(Offset.Zero) }
+    var lastTapMs by remember { mutableStateOf(0L) }
 
     Column(
         modifier = Modifier
@@ -404,7 +407,10 @@ fun LensStageScreen(
                                             if (maxPointers >= 2) {
                                                 onMouseClick(null, null, "right", 1)
                                             } else {
-                                                onMouseClick(null, null, "left", 1)
+                                                val now = System.currentTimeMillis()
+                                                val isDouble = (now - lastTapMs) in 40L..320L
+                                                lastTapMs = if (isDouble) 0L else now
+                                                onMouseClick(null, null, "left", if (isDouble) 2 else 1)
                                             }
                                         }
                                     }
@@ -493,6 +499,25 @@ fun LensStageScreen(
                     }
                 }
 
+                // Live 120Hz Virtual Cursor Indicator in Trackpad mode (crucial for Single-Window & high-latency networks!)
+                if (state.stageInputMode == StageInputMode.TRACKPAD && meta.sourceWidth > 0 && meta.sourceHeight > 0) {
+                    val curRelX = (meta.cursorX - meta.originX).toFloat() / meta.sourceWidth.toFloat()
+                    val curRelY = (meta.cursorY - meta.originY).toFloat() / meta.sourceHeight.toFloat()
+                    if (curRelX in 0f..1f && curRelY in 0f..1f) {
+                        val cpx = (offsetX + curRelX * fittedW).roundToInt()
+                        val cpy = (offsetY + curRelY * fittedH).roundToInt()
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .offset { IntOffset(cpx - 10, cpy - 10) }
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .border(2.dp, KovaPalette.Cyan, CircleShape)
+                                .background(KovaPalette.Cyan.copy(alpha = 0.22f))
+                        )
+                    }
+                }
+
                 // Precision 2.4x Magnifying Loupe floating cleanly above the user's thumb!
                 if (loupeActive) {
                     val loupeSizePx = with(density) { 126.dp.toPx() }.roundToInt()
@@ -512,7 +537,7 @@ fun LensStageScreen(
                 }
             }
 
-            // Live frame latency / dimensions pill
+            // Live frame latency / dimensions pill + One-Thumb Quick Scroll pills
             if (bmp != null) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -527,6 +552,38 @@ fun LensStageScreen(
                         color = KovaPalette.InkSecondary,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
+                }
+
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = KovaPalette.SlateCard.copy(alpha = 0.82f),
+                        border = BorderStroke(1.dp, KovaPalette.BorderDark),
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable { onScroll(0, 240) }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.KeyboardArrowUp, "Scroll Up", tint = KovaPalette.Cyan, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = KovaPalette.SlateCard.copy(alpha = 0.82f),
+                        border = BorderStroke(1.dp, KovaPalette.BorderDark),
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable { onScroll(0, -240) }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.KeyboardArrowDown, "Scroll Down", tint = KovaPalette.Cyan, modifier = Modifier.size(20.dp))
+                        }
+                    }
                 }
             }
 
