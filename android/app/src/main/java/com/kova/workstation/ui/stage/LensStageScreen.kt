@@ -413,7 +413,7 @@ fun LensStageScreen(
             }
 
             // Floating Glass Top Bar (Window Picker, Reflow, X-Ray, Zen Fullscreen)
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = !zenMode,
                 enter = fadeIn(),
                 exit = fadeOut(),
