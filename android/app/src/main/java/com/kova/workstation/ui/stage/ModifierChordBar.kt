@@ -176,11 +176,11 @@ fun ModifierChordBar(
             }
         }
 
-        // Calm, Translucent Single-Row Floating Cockpit Pill
+        // Calm, Translucent Single-Row Frosted-Glass Stage Pill
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = KovaPalette.SlateDeep.copy(alpha = 0.88f),
-            border = BorderStroke(1.dp, KovaPalette.BorderDark.copy(alpha = 0.8f)),
+            color = Color(0xD8131E30),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
             shadowElevation = 8.dp,
             modifier = Modifier.fillMaxWidth()
         ) {

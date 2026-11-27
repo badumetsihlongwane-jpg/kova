@@ -384,7 +384,7 @@ class KovaClient(val profile: WorkstationProfile) {
             .build()
         return httpClient.newWebSocket(req, object : WebSocketListener() {
             private val decodeOpts = BitmapFactory.Options().apply {
-                inPreferredConfig = Bitmap.Config.RGB_565
+                inPreferredConfig = Bitmap.Config.ARGB_8888
                 inDither = false
             }
 

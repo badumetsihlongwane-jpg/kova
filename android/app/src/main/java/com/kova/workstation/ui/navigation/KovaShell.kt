@@ -2,10 +2,13 @@ package com.kova.workstation.ui.navigation
 
 import android.app.Activity
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,16 +23,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.DesktopWindows
-import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -91,7 +88,7 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
     }
 
     KovaTheme(darkTheme = state.preferences.darkTheme) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             if (state.activeProfile == null || (!state.connected && state.systemInfo == null)) {
                 ConnectScreen(
                     state = state,
@@ -124,11 +121,12 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                         )
                     }
                 } else if (inFullscreen) {
-                    // 100% phone width × 100% phone height edge-to-edge live Windows Stage!
+                    // 100% phone width × 100% phone height edge-to-edge Stage (macOS Glass Dock accessible via right edge handle!)
                     LensStageScreen(
                         state = state,
                         stageFrameFlow = viewModel.stageFrame,
                         stageCursorFlow = viewModel.stageCursor,
+                        onSelectTab = viewModel::selectTab,
                         onOpenSwitcher = { viewModel.setWorkspaceSwitcherVisible(true) },
                         onSwitchAdjacentWindow = viewModel::switchAdjacentWindow,
                         onSelectSource = viewModel::setStageSource,
@@ -155,67 +153,32 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                         onActivateDisplay = viewModel::activateLiveDisplay
                     )
                 } else {
-                    Scaffold(
-                        topBar = {
-                            CompactStatusBar(
-                                workstationName = state.activeProfile?.name ?: "Windows",
-                                connected = state.connected,
-                                latencyMs = state.latencyMs,
-                                onSettingsTab = state.activeTab == WorkspaceTab.SETTINGS,
-                                onOpenType = {
-                                    if (state.activeTab == WorkspaceTab.STAGE) {
-                                        viewModel.setLiveKeyboardVisible(!state.showLiveKeyboard)
-                                    } else {
-                                        viewModel.setPromptComposerVisible(true)
-                                    }
-                                },
-                                onOpenSettings = { viewModel.selectTab(WorkspaceTab.SETTINGS) }
-                            )
-                        },
-                        bottomBar = {
-                            if (!state.showLiveKeyboard) {
-                                NavigationBar(
-                                    containerColor = MaterialTheme.colorScheme.surface,
-                                    tonalElevation = 4.dp
-                                ) {
-                                    NavigationBarItem(
-                                        selected = state.activeTab == WorkspaceTab.STAGE,
-                                        onClick = { viewModel.selectTab(WorkspaceTab.STAGE) },
-                                        icon = { Icon(Icons.Rounded.DesktopWindows, null) },
-                                        label = { Text("Stage") }
-                                    )
-                                    NavigationBarItem(
-                                        selected = state.activeTab == WorkspaceTab.SHELL,
-                                        onClick = { viewModel.selectTab(WorkspaceTab.SHELL) },
-                                        icon = { Icon(Icons.Rounded.Terminal, null) },
-                                        label = { Text("Shell") }
-                                    )
-                                    NavigationBarItem(
-                                        selected = state.activeTab == WorkspaceTab.FORGE,
-                                        onClick = { viewModel.selectTab(WorkspaceTab.FORGE) },
-                                        icon = { Icon(Icons.Rounded.FolderOpen, null) },
-                                        label = { Text("Forge") }
-                                    )
-                                    NavigationBarItem(
-                                        selected = state.activeTab == WorkspaceTab.SETTINGS,
-                                        onClick = { viewModel.selectTab(WorkspaceTab.SETTINGS) },
-                                        icon = { Icon(Icons.Rounded.Settings, null) },
-                                        label = { Text("Settings") }
-                                    )
+                    val showFloatingDock = !state.showLiveKeyboard &&
+                        !(state.activeTab == WorkspaceTab.STAGE && state.stageControlsCollapsed)
+
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        CompactStatusBar(
+                            workstationName = state.activeProfile?.name ?: "Windows",
+                            connected = state.connected,
+                            latencyMs = state.latencyMs,
+                            onSettingsTab = state.activeTab == WorkspaceTab.SETTINGS,
+                            onOpenType = {
+                                if (state.activeTab == WorkspaceTab.STAGE) {
+                                    viewModel.setLiveKeyboardVisible(!state.showLiveKeyboard)
+                                } else {
+                                    viewModel.setPromptComposerVisible(true)
                                 }
-                            }
-                        }
-                    ) { innerPadding ->
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(innerPadding)
-                        ) {
+                            },
+                            onOpenSettings = { viewModel.selectTab(WorkspaceTab.SETTINGS) }
+                        )
+
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             when (state.activeTab) {
                                 WorkspaceTab.STAGE -> LensStageScreen(
                                     state = state,
                                     stageFrameFlow = viewModel.stageFrame,
                                     stageCursorFlow = viewModel.stageCursor,
+                                    onSelectTab = viewModel::selectTab,
                                     onOpenSwitcher = { viewModel.setWorkspaceSwitcherVisible(true) },
                                     onSwitchAdjacentWindow = viewModel::switchAdjacentWindow,
                                     onSelectSource = viewModel::setStageSource,
@@ -242,56 +205,97 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                                     onActivateDisplay = viewModel::activateLiveDisplay
                                 )
 
-                                WorkspaceTab.SHELL -> ShellScreen(
-                                    state = state,
-                                    onCreateTerminal = { shell -> viewModel.createTerminal(shell) },
-                                    onSelectTerminal = viewModel::selectTerminal,
-                                    onCloseTerminal = viewModel::closeTerminal,
-                                    onSendInput = viewModel::sendTerminalInput,
-                                    onResize = viewModel::resizeActiveTerminal,
-                                    onCopyAll = viewModel::copyActiveTerminalText,
-                                    onFontSizeDelta = { delta ->
-                                        viewModel.updatePreferences {
-                                            it.copy(terminalFontSp = (it.terminalFontSp + delta).coerceIn(9f, 20f))
+                                WorkspaceTab.SHELL -> Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(bottom = 86.dp)
+                                ) {
+                                    ShellScreen(
+                                        state = state,
+                                        onCreateTerminal = { shell -> viewModel.createTerminal(shell) },
+                                        onSelectTerminal = viewModel::selectTerminal,
+                                        onCloseTerminal = viewModel::closeTerminal,
+                                        onSendInput = viewModel::sendTerminalInput,
+                                        onResize = viewModel::resizeActiveTerminal,
+                                        onCopyAll = viewModel::copyActiveTerminalText,
+                                        onFontSizeDelta = { delta ->
+                                            viewModel.updatePreferences {
+                                                it.copy(terminalFontSp = (it.terminalFontSp + delta).coerceIn(9f, 20f))
+                                            }
+                                        },
+                                        onAddSnippet = viewModel::addSnippet,
+                                        onDeleteSnippet = viewModel::deleteSnippet
+                                    )
+                                }
+
+                                WorkspaceTab.FORGE -> Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(bottom = 86.dp)
+                                ) {
+                                    ForgeFilesScreen(
+                                        state = state,
+                                        onBrowse = viewModel::browsePath,
+                                        onSearch = viewModel::searchCurrentFolder,
+                                        onToggleHidden = viewModel::toggleHiddenFiles,
+                                        onOpenFile = viewModel::openFileInEditor,
+                                        onCreateFolder = viewModel::createNewFolder,
+                                        onCreateFile = viewModel::createNewFile,
+                                        onRename = viewModel::renameEntry,
+                                        onDelete = viewModel::deleteEntry,
+                                        onUploadBytes = viewModel::uploadBytesToCurrentDir,
+                                        onDownloadFile = viewModel::downloadFileBytes,
+                                        onOpenTerminalHere = { dir -> viewModel.createTerminal("powershell", cwd = dir) },
+                                        onCopyPath = { viewModel.copyToAndroidClipboard(it) },
+                                        onOpenGit = viewModel::openGitPanel
+                                    )
+                                }
+
+                                WorkspaceTab.SETTINGS -> Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(bottom = 86.dp)
+                                ) {
+                                    SettingsScreen(
+                                        state = state,
+                                        onUpdatePrefs = viewModel::updatePreferences,
+                                        onPingNow = viewModel::pingNow,
+                                        onReconnectNow = viewModel::reconnectNow,
+                                        onActivateDisplay = viewModel::activateLiveDisplay,
+                                        onOpenRemoteWindowsSettings = viewModel::openRemoteWindowsSettings,
+                                        onResetDefaults = viewModel::resetPreferencesToDefaults,
+                                        onDisconnect = viewModel::disconnect
+                                    )
+                                }
+                            }
+
+                            // Floating macOS Frosted-Glass Dock (sleek glass pill replacing clunky Material NavigationBar!)
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = showFloatingDock,
+                                enter = fadeIn(),
+                                exit = fadeOut(),
+                                modifier = Modifier.align(Alignment.BottomCenter)
+                            ) {
+                                GlassWorkspaceDock(
+                                    activeTab = state.activeTab,
+                                    isFullscreen = false,
+                                    openWindowCount = state.windows.size,
+                                    onSelectTab = viewModel::selectTab,
+                                    onOpenCollage = { viewModel.setWorkspaceSwitcherVisible(true) },
+                                    onOpenKeyboard = {
+                                        if (state.activeTab != WorkspaceTab.STAGE) {
+                                            viewModel.selectTab(WorkspaceTab.STAGE)
                                         }
+                                        viewModel.setLiveKeyboardVisible(true)
                                     },
-                                    onAddSnippet = viewModel::addSnippet,
-                                    onDeleteSnippet = viewModel::deleteSnippet
-                                )
-
-                                WorkspaceTab.FORGE -> ForgeFilesScreen(
-                                    state = state,
-                                    onBrowse = viewModel::browsePath,
-                                    onSearch = viewModel::searchCurrentFolder,
-                                    onToggleHidden = viewModel::toggleHiddenFiles,
-                                    onOpenFile = viewModel::openFileInEditor,
-                                    onCreateFolder = viewModel::createNewFolder,
-                                    onCreateFile = viewModel::createNewFile,
-                                    onRename = viewModel::renameEntry,
-                                    onDelete = viewModel::deleteEntry,
-                                    onUploadBytes = viewModel::uploadBytesToCurrentDir,
-                                    onDownloadFile = viewModel::downloadFileBytes,
-                                    onOpenTerminalHere = { dir -> viewModel.createTerminal("powershell", cwd = dir) },
-                                    onCopyPath = { viewModel.copyToAndroidClipboard(it) },
-                                    onOpenGit = viewModel::openGitPanel
-                                )
-
-                                WorkspaceTab.SETTINGS -> SettingsScreen(
-                                    state = state,
-                                    onUpdatePrefs = viewModel::updatePreferences,
-                                    onPingNow = viewModel::pingNow,
-                                    onReconnectNow = viewModel::reconnectNow,
-                                    onActivateDisplay = viewModel::activateLiveDisplay,
-                                    onOpenRemoteWindowsSettings = viewModel::openRemoteWindowsSettings,
-                                    onResetDefaults = viewModel::resetPreferencesToDefaults,
-                                    onDisconnect = viewModel::disconnect
+                                    onExitFullscreen = { viewModel.setFullscreen(false) }
                                 )
                             }
                         }
                     }
                 }
 
-                // Slide-Over Windows Workspace Switcher, Quick Launch, Telemetry & Clipboard
+                // macOS Mission Control Frosted-Glass Collage Sheet
                 if (state.showWorkspaceSwitcher) {
                     WorkspaceSwitcherSheet(
                         state = state,
@@ -313,7 +317,6 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                     )
                 }
 
-                // Shared Modals: Semantic UI Control Sheet, Fallback Prompt Composer (non-Stage tabs), Git Panel
                 if (state.showSemanticSheet) {
                     SemanticSheet(
                         uiaData = state.uiaData,
@@ -352,7 +355,7 @@ fun KovaRoot(viewModel: WorkstationViewModel) {
                 }
             }
 
-            // Floating Toast Pill (non-blocking, crisp feedback)
+            // Floating Toast Pill
             AnimatedVisibility(
                 visible = !state.bannerMessage.isNullOrBlank(),
                 modifier = Modifier

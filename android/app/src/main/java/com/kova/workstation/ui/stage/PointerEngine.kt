@@ -87,6 +87,14 @@ data class StageProjection(
     }
 
     companion object {
+        /**
+         * Compute an undistorted, pixel-exact projection:
+         * - Default (`coverFill = false`, `keyboardFocusNormY = null`): exact aspect-preserved `Fit`.
+         * - `coverFill = true`: aspect-preserved `Cover` (`max(scaleX, scaleY)` — fills 100% phone
+         *   width & height with 1:1 square pixels, ZERO stretched/squished text!) panned by `panNormX/Y`.
+         * - `keyboardFocusNormY != null`: fits crisp full width and aligns `keyboardFocusNormY`
+         *   (e.g., the tapped input box or bottom chat box) right above the open Android keyboard!
+         */
         fun compute(
             boxWidth: Float,
             boxHeight: Float,
@@ -94,20 +102,47 @@ data class StageProjection(
             sourceHeight: Int,
             originX: Int,
             originY: Int,
-            fillScreen: Boolean = false
+            fillScreen: Boolean = false,
+            panNormX: Float = 0.5f,
+            panNormY: Float = 0.5f,
+            keyboardFocusNormY: Float? = null
         ): StageProjection {
             val safeBoxW = boxWidth.coerceAtLeast(1f)
             val safeBoxH = boxHeight.coerceAtLeast(1f)
             val safeSrcW = sourceWidth.coerceAtLeast(1)
             val safeSrcH = sourceHeight.coerceAtLeast(1)
+            val srcAspect = safeSrcW.toFloat() / safeSrcH.toFloat()
+            val boxAspect = safeBoxW / safeBoxH
+
             val fittedW: Float
             val fittedH: Float
-            if (fillScreen) {
+            val offX: Float
+            val offY: Float
+
+            if (keyboardFocusNormY != null) {
+                // Crisp full-width readable zoom while typing; pan vertically so focus point sits cleanly above keyboard!
                 fittedW = safeBoxW
-                fittedH = safeBoxH
+                fittedH = safeBoxW / srcAspect
+                offX = 0f
+                offY = if (fittedH <= safeBoxH) {
+                    (safeBoxH - fittedH) / 2f
+                } else {
+                    val focusPx = keyboardFocusNormY.coerceIn(0f, 1f) * fittedH
+                    val targetScreenY = safeBoxH * 0.78f
+                    (targetScreenY - focusPx).coerceIn(safeBoxH - fittedH, 0f)
+                }
+            } else if (fillScreen) {
+                // Aspect-safe Cover (NEVER stretches/squishes letters!) filling 100% width & height
+                if (srcAspect > boxAspect) {
+                    fittedH = safeBoxH
+                    fittedW = safeBoxH * srcAspect
+                } else {
+                    fittedW = safeBoxW
+                    fittedH = safeBoxW / srcAspect
+                }
+                offX = -((fittedW - safeBoxW).coerceAtLeast(0f)) * panNormX.coerceIn(0f, 1f)
+                offY = -((fittedH - safeBoxH).coerceAtLeast(0f)) * panNormY.coerceIn(0f, 1f)
             } else {
-                val srcAspect = safeSrcW.toFloat() / safeSrcH.toFloat()
-                val boxAspect = safeBoxW / safeBoxH
                 if (srcAspect > boxAspect) {
                     fittedW = safeBoxW
                     fittedH = safeBoxW / srcAspect
@@ -115,14 +150,17 @@ data class StageProjection(
                     fittedH = safeBoxH
                     fittedW = safeBoxH * srcAspect
                 }
+                offX = (safeBoxW - fittedW) / 2f
+                offY = (safeBoxH - fittedH) / 2f
             }
+
             return StageProjection(
                 boxWidth = safeBoxW,
                 boxHeight = safeBoxH,
                 fittedWidth = fittedW,
                 fittedHeight = fittedH,
-                offsetX = (safeBoxW - fittedW) / 2f,
-                offsetY = (safeBoxH - fittedH) / 2f,
+                offsetX = offX,
+                offsetY = offY,
                 originX = originX,
                 originY = originY,
                 sourceWidth = safeSrcW,

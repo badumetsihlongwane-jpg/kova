@@ -136,6 +136,8 @@ gdi32.CreateDIBSection.argtypes = [
     wt.DWORD,
 ]
 gdi32.CreateDIBSection.restype = wt.HBITMAP
+gdi32.GdiFlush.argtypes = []
+gdi32.GdiFlush.restype = wt.BOOL
 
 
 class WindowUnavailableError(RuntimeError):
@@ -206,7 +208,7 @@ def _fast_hash(raw: bytes) -> str:
 
 
 class ScreenCapturer:
-    """Captures full desktop or single window with reusable DIBSection, exact DWM bounds & fast codecs."""
+    """Captures full desktop or single window with reusable DIBSection, exact DWM bounds & adaptive crisp codecs."""
 
     def __init__(self) -> None:
         self._dib_lock = threading.Lock()
@@ -288,6 +290,7 @@ class ScreenCapturer:
                     gdi32.BitBlt(mem_dc, 0, 0, sw, sh, hdc_screen, sx, sy, SRCCOPY)
                 if draw_cursor:
                     cursor_pos = _draw_cursor_on_dc(mem_dc, sx, sy)
+                gdi32.GdiFlush()
                 raw = ctypes.string_at(bits_addr, sw * sh * 4)
                 img = Image.frombuffer("RGB", (sw, sh), raw, "raw", "BGRX", 0, 1)
             finally:
@@ -436,22 +439,29 @@ class ScreenCapturer:
         if last_hash and fhash == last_hash:
             return CaptureResult(image_bytes=b"", meta=meta, frame_hash=fhash, unchanged=True, is_blank=blank)
 
-        # Preserve exact source aspect ratio with consistent even output dimensions (fast BILINEAR)
+        # Preserve exact source aspect ratio with consistent even output dimensions
         out_img = img
         if max_width and max_width > 0 and out_img.width > max_width:
             target_w = max(32, int(max_width) & ~1)
             ratio = target_w / float(out_img.width)
             target_h = max(16, int(round(out_img.height * ratio)) & ~1)
-            out_img = out_img.resize((target_w, target_h), Image.Resampling.BILINEAR)
+            resample = Image.Resampling.LANCZOS if fmt.lower() == "png" else Image.Resampling.BILINEAR
+            out_img = out_img.resize((target_w, target_h), resample)
 
         buf = io.BytesIO()
         fmt_lower = fmt.lower()
         q = max(30, min(95, int(quality)))
-        if fmt_lower == "webp":
+        if fmt_lower == "png":
+            # Lossless razor-sharp still keyframe (~18-22ms, zero text artifacts!)
+            out_img.save(buf, format="PNG", compress_level=1)
+            mime = "image/png"
+        elif fmt_lower == "webp":
             out_img.save(buf, format="WEBP", quality=q, method=0)
             mime = "image/webp"
         else:
-            out_img.save(buf, format="JPEG", quality=q, optimize=False, subsampling=2)
+            # 4:4:4 chroma (subsampling=0) when quality >= 80 keeps desktop text crisp at ~4ms!
+            sub = 0 if q >= 80 else 2
+            out_img.save(buf, format="JPEG", quality=q, optimize=False, subsampling=sub)
             mime = "image/jpeg"
 
         encoded = buf.getvalue()

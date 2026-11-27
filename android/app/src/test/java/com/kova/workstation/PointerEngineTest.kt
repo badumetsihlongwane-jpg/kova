@@ -170,21 +170,47 @@ class PointerEngineTest {
     }
 
     @Test
-    fun stageProjectionFillScreenSpansFullWidthAndHeight() {
+    fun stageProjectionCoverFillPreservesAspectRatioWithoutStretching() {
+        // 1024x768 landscape console rendered in 1080x2400 portrait phone with fillScreen = true
+        // Must fill 100% height & width while keeping exact 4:3 aspect ratio (zero squished letters!)
         val proj = StageProjection.compute(
             boxWidth = 1080f,
             boxHeight = 2400f,
+            sourceWidth = 1024,
+            sourceHeight = 768,
+            originX = 0,
+            originY = 0,
+            fillScreen = true,
+            panNormX = 0.5f,
+            panNormY = 0.5f
+        )
+        assertEquals(2400f, proj.fittedHeight, 0.01f)
+        assertEquals(3200f, proj.fittedWidth, 0.01f)
+        assertEquals(1024f / 768f, proj.fittedWidth / proj.fittedHeight, 0.001f)
+        // Center of phone hits exact center of 1024x768 desktop
+        val center = proj.viewportToScreen(540f, 1200f)
+        assertTrue(abs(center.first - 512) <= 1)
+        assertTrue(abs(center.second - 384) <= 1)
+    }
+
+    @Test
+    fun stageProjectionKeyboardFocusBringsBottomPromptAboveKeyboard() {
+        // Tall portrait 720x1540 Windows screen inside shorter 1080x1100 viewport above open keyboard
+        val proj = StageProjection.compute(
+            boxWidth = 1080f,
+            boxHeight = 1100f,
             sourceWidth = 720,
             sourceHeight = 1540,
             originX = 0,
             originY = 0,
-            fillScreen = true
+            keyboardFocusNormY = 0.90f
         )
         assertEquals(1080f, proj.fittedWidth, 0.01f)
-        assertEquals(2400f, proj.fittedHeight, 0.01f)
-        assertEquals(0f, proj.offsetX, 0.01f)
-        assertEquals(0f, proj.offsetY, 0.01f)
-        assertEquals(719 to 1539, proj.viewportToScreen(1080f, 2400f))
+        assertTrue("Expected fittedHeight > boxHeight so text stays readable", proj.fittedHeight > 1100f)
+        // Windows y=90% (bottom chat prompt box) must land visibly inside [0, 1100] above keyboard!
+        val promptPos = proj.screenToViewport(360, (1540 * 0.90f).toInt())
+        assertNotNull(promptPos)
+        assertTrue("Prompt box must sit inside visible area above keyboard, got y=${promptPos!!.second}", promptPos.second in 200f..1060f)
     }
 
     @Test

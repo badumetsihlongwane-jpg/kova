@@ -546,9 +546,9 @@ class KovaServer:
             "mode": "desktop",
             "hwnd": None,
             "fps": 24,
-            "quality": 76,
+            "quality": 84,
             "format": "jpeg",
-            "max_width": 960,
+            "max_width": 1440,
             "roi": None,
             "paused": False,
             "force_keyframe": True,
@@ -561,10 +561,13 @@ class KovaServer:
         frame_seq = 0
         acked_frame_seq = 0
         last_sent_ts = 0.0
+        last_motion_ts = 0.0
+        crisp_pending = False
         client_supports_ack = False
 
         async def stream_loop() -> None:
-            nonlocal last_hash, last_blank_warned, last_window_warned, frame_seq, last_sent_ts
+            nonlocal last_hash, last_blank_warned, last_window_warned
+            nonlocal frame_seq, last_sent_ts, last_motion_ts, crisp_pending
             try:
                 await asyncio.wait_for(config_ready.wait(), timeout=0.25)
             except asyncio.TimeoutError:
@@ -587,6 +590,18 @@ class KovaServer:
                 try:
                     force = state["force_keyframe"]
                     state["force_keyframe"] = False
+
+                    # Auto-send a pixel-perfect lossless PNG still frame 220ms after motion settles!
+                    send_crisp_still = (
+                        not force
+                        and crisp_pending
+                        and (t_start - last_motion_ts) >= 0.22
+                        and str(state["format"]).lower() != "webp"
+                        and int(state["quality"]) >= 72
+                    )
+                    effective_fmt = "png" if send_crisp_still else str(state["format"])
+                    effective_last_hash = None if (force or send_crisp_still) else last_hash
+
                     res = await asyncio.to_thread(
                         self.capturer.capture_frame,
                         state["mode"],
@@ -594,11 +609,12 @@ class KovaServer:
                         state["roi"],
                         int(state["max_width"]),
                         int(state["quality"]),
-                        str(state["format"]),
-                        None if force else last_hash,
+                        effective_fmt,
+                        effective_last_hash,
                         True,
                         False,
                     )
+                    changed_from_prev = (last_hash is None) or (res.frame_hash != last_hash)
                     last_hash = res.frame_hash
 
                     if last_window_warned is not None:
@@ -621,10 +637,17 @@ class KovaServer:
                     if not res.unchanged and res.image_bytes:
                         frame_seq += 1
                         res.meta["frame_id"] = frame_seq
+                        res.meta["crisp"] = send_crisp_still
                         header = json.dumps(res.meta).encode("utf-8")
                         packet = struct.pack(">I", len(header)) + header + res.image_bytes
                         await ws.send_bytes(packet)
-                        last_sent_ts = time.monotonic()
+                        now_sent = time.monotonic()
+                        last_sent_ts = now_sent
+                        if send_crisp_still and not changed_from_prev:
+                            crisp_pending = False
+                        else:
+                            last_motion_ts = now_sent
+                            crisp_pending = not res.is_blank
                 except WindowUnavailableError as werr:
                     # Do NOT flip silently to desktop aspect ratio; notify client cleanly!
                     if last_window_warned != werr.reason and not ws.closed:

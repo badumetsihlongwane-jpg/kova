@@ -266,12 +266,12 @@ fun SettingsScreen(
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Display & Streaming", style = MaterialTheme.typography.titleMedium)
 
-                Text("Stream Codec", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Stream Quality Mode", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = prefs.streamFormat.equals("jpeg", ignoreCase = true),
-                        onClick = { onUpdatePrefs { it.copy(streamFormat = "jpeg") } },
-                        label = { Text("Fast JPEG (Low Lag)") }
+                        onClick = { onUpdatePrefs { it.copy(streamFormat = "jpeg", streamQuality = 84, streamMaxWidth = 1440) } },
+                        label = { Text("Retina Adaptive (PNG + 4:4:4)") }
                     )
                     FilterChip(
                         selected = prefs.streamFormat.equals("webp", ignoreCase = true),
@@ -283,17 +283,17 @@ fun SettingsScreen(
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = prefs.streamFps <= 14,
-                        onClick = { onUpdatePrefs { it.copy(streamFps = 12, streamQuality = 65, streamMaxWidth = 720, streamFormat = "webp") } },
+                        onClick = { onUpdatePrefs { it.copy(streamFps = 12, streamQuality = 68, streamMaxWidth = 960, streamFormat = "webp") } },
                         label = { Text("Cellular Saver") }
                     )
                     FilterChip(
                         selected = prefs.streamFps in 15..25,
-                        onClick = { onUpdatePrefs { it.copy(streamFps = 24, streamQuality = 75, streamMaxWidth = 960, streamFormat = "jpeg") } },
-                        label = { Text("Smooth 24 FPS") }
+                        onClick = { onUpdatePrefs { it.copy(streamFps = 24, streamQuality = 84, streamMaxWidth = 1440, streamFormat = "jpeg") } },
+                        label = { Text("Crisp 24 FPS") }
                     )
                     FilterChip(
                         selected = prefs.streamFps >= 26,
-                        onClick = { onUpdatePrefs { it.copy(streamFps = 30, streamQuality = 82, streamMaxWidth = 1280, streamFormat = "jpeg") } },
+                        onClick = { onUpdatePrefs { it.copy(streamFps = 30, streamQuality = 88, streamMaxWidth = 1440, streamFormat = "jpeg") } },
                         label = { Text("Ultra 30 FPS") }
                     )
                 }
@@ -323,8 +323,8 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
 
                 ToggleRow(
-                    title = "Fill Entire Phone Screen",
-                    subtitle = "Stretches display edge-to-edge across 100% phone width and height.",
+                    title = "Cover Zoom-Fill (1:1 Aspect)",
+                    subtitle = "Fills full phone width & height with zero letter stretching; drag with 2 fingers to pan.",
                     checked = prefs.stageFillScreen,
                     onCheckedChange = { c -> onUpdatePrefs { it.copy(stageFillScreen = c) } }
                 )

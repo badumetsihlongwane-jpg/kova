@@ -25,8 +25,8 @@ data class WorkstationProfile(
 @Serializable
 data class AppPreferences(
     val streamFps: Int = 24,
-    val streamQuality: Int = 75,
-    val streamMaxWidth: Int = 960,
+    val streamQuality: Int = 84,
+    val streamMaxWidth: Int = 1440,
     val streamFormat: String = "jpeg",
     val stageFillScreen: Boolean = false,
     val defaultInputMode: String = "TOUCH",

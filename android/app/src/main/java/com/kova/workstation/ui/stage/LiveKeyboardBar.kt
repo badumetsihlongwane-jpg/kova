@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,8 +22,10 @@ import androidx.compose.material.icons.rounded.Backspace
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.FitScreen
 import androidx.compose.material.icons.rounded.KeyboardReturn
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.VerticalAlignBottom
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -40,6 +41,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -52,21 +55,18 @@ import androidx.compose.ui.unit.sp
 import com.kova.workstation.ui.theme.KovaPalette
 
 /**
- * Slim, non-blocking inline keyboard bar anchored flush above Gboard via `imePadding()`.
+ * Slim frosted-glass inline keyboard bar docked directly BELOW the live Stage viewport
+ * (inside a `Column(imePadding())`), so Android's keyboard NEVER covers the bottom of Windows!
  *
- * ZERO dark modal scrim and ZERO bottom-sheet popup covering the Windows screen:
- * the entire live Windows desktop above the keyboard stays 100% visible, bright, and tappable
- * while you type, swipe, or voice-dictate!
- *
- * Supports two 1-tap modes:
- * - Live (Bolt): streams typed/swiped words, autocorrect patches, Backspace, and Enter
- *   directly into the focused Windows app in real time.
- * - Draft (EditNote): compose locally in the slim bar while watching Windows above, then
- *   inject (`→`) or submit (`↵`).
+ * Includes:
+ * - 1-tap `Live` (real-time streaming + Gboard autocorrect diff) vs `Draft` mode
+ * - 1-tap `Focus` (pans tapped/bottom input cleanly above keyboard at full width) vs `Fit` (full screen above keyboard)
  */
 @Composable
 fun LiveKeyboardBar(
     hapticsEnabled: Boolean,
+    fitWholeScreenAboveIme: Boolean,
+    onToggleFitAboveIme: () -> Unit,
     onImePatch: (backspaces: Int, text: String) -> Unit,
     onSendKeys: (List<String>) -> Unit,
     onDispatchDraft: (text: String, pressEnter: Boolean, mode: String) -> Unit,
@@ -86,25 +86,29 @@ fun LiveKeyboardBar(
         keyboardController?.show()
     }
 
+    val glassBg = Brush.verticalGradient(
+        listOf(Color(0xEA172236), Color(0xF40B1220))
+    )
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = KovaPalette.SlateDeep.copy(alpha = 0.94f),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = Color.Transparent,
         border = BorderStroke(
             1.dp,
-            if (liveMode) KovaPalette.Cyan.copy(alpha = 0.7f) else KovaPalette.Emerald.copy(alpha = 0.7f)
+            if (liveMode) KovaPalette.Cyan.copy(alpha = 0.55f) else KovaPalette.Emerald.copy(alpha = 0.55f)
         ),
         shadowElevation = 10.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .background(glassBg)
+                .padding(horizontal = 7.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             // 1-tap Live ⚡ / Draft mode switch
             Surface(
@@ -113,20 +117,19 @@ fun LiveKeyboardBar(
                 modifier = Modifier.clickable {
                     if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     liveMode = !liveMode
-                    // Reset sync buffer cleanly when switching modes so nothing double-types
                     text = ""
                     lastSyncedText = ""
                 }
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = if (liveMode) Icons.Rounded.Bolt else Icons.Rounded.EditNote,
                         contentDescription = if (liveMode) "Live typing mode" else "Draft mode",
                         tint = if (liveMode) KovaPalette.Cyan else KovaPalette.Emerald,
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(Modifier.width(2.dp))
                     Text(
@@ -138,19 +141,39 @@ fun LiveKeyboardBar(
                 }
             }
 
-            // Ultra-compact inline text field (max 2 lines so it NEVER blocks Windows!)
+            // 1-tap Focus-Input vs Fit-Whole-Screen above keyboard
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .clickable {
+                        if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onToggleFitAboveIme()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (fitWholeScreenAboveIme) Icons.Rounded.FitScreen else Icons.Rounded.VerticalAlignBottom,
+                    contentDescription = if (fitWholeScreenAboveIme) "Fit whole screen above keyboard" else "Focus input above keyboard",
+                    tint = KovaPalette.Amber,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            // Compact inline text input
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = 34.dp, max = 58.dp)
+                    .heightIn(min = 34.dp, max = 56.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(KovaPalette.SlateCard)
-                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                    .background(Color(0xFF0E1729))
+                    .padding(horizontal = 9.dp, vertical = 7.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
                 if (text.isEmpty()) {
                     Text(
-                        text = if (liveMode) "Type live into Windows..." else "Draft message, then tap send...",
+                        text = if (liveMode) "Type live..." else "Draft message...",
                         style = MaterialTheme.typography.bodySmall,
                         color = KovaPalette.InkMuted,
                         maxLines = 1
@@ -187,9 +210,7 @@ fun LiveKeyboardBar(
                     ),
                     cursorBrush = SolidColor(KovaPalette.Cyan),
                     maxLines = 2,
-                    keyboardOptions = KeyboardOptions(
-                        imeAction = if (liveMode) ImeAction.Send else ImeAction.Send
-                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(
                         onSend = {
                             if (liveMode) {
@@ -209,12 +230,11 @@ fun LiveKeyboardBar(
             }
 
             if (liveMode) {
-                // Dedicated Backspace (works even when local bar is empty!)
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
-                        .background(KovaPalette.SlateCard)
+                        .background(Color.White.copy(alpha = 0.08f))
                         .clickable {
                             if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             if (text.isNotEmpty()) {
@@ -225,15 +245,14 @@ fun LiveKeyboardBar(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.Backspace, "Backspace", tint = KovaPalette.InkSecondary, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Rounded.Backspace, "Backspace", tint = KovaPalette.InkSecondary, modifier = Modifier.size(15.dp))
                 }
 
-                // Direct Enter
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
-                        .background(KovaPalette.Cyan.copy(alpha = 0.22f))
+                        .background(KovaPalette.Cyan.copy(alpha = 0.24f))
                         .clickable {
                             if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSendKeys(listOf("enter"))
@@ -242,15 +261,14 @@ fun LiveKeyboardBar(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.KeyboardReturn, "Enter", tint = KovaPalette.Cyan, modifier = Modifier.size(17.dp))
+                    Icon(Icons.Rounded.KeyboardReturn, "Enter", tint = KovaPalette.Cyan, modifier = Modifier.size(16.dp))
                 }
             } else {
-                // Draft Inject (without Enter)
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
-                        .background(KovaPalette.SlateCard)
+                        .background(Color.White.copy(alpha = 0.08f))
                         .clickable(enabled = text.isNotEmpty()) {
                             if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onDispatchDraft(text, false, "paste")
@@ -262,16 +280,15 @@ fun LiveKeyboardBar(
                         Icons.Rounded.Send,
                         "Inject text",
                         tint = if (text.isNotEmpty()) KovaPalette.Emerald else KovaPalette.InkMuted,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                 }
 
-                // Draft Send + Enter
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
-                        .background(if (text.isNotEmpty()) KovaPalette.Emerald else KovaPalette.SlateCard)
+                        .background(if (text.isNotEmpty()) KovaPalette.Emerald else Color.White.copy(alpha = 0.08f))
                         .clickable(enabled = text.isNotEmpty()) {
                             if (hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onDispatchDraft(text, true, "paste")
@@ -283,15 +300,14 @@ fun LiveKeyboardBar(
                         Icons.Rounded.KeyboardReturn,
                         "Send + Enter",
                         tint = if (text.isNotEmpty()) KovaPalette.Obsidian else KovaPalette.InkMuted,
-                        modifier = Modifier.size(17.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            // Dismiss keyboard bar
             Box(
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(28.dp)
                     .clip(CircleShape)
                     .clickable {
                         keyboardController?.hide()
@@ -299,7 +315,7 @@ fun LiveKeyboardBar(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Rounded.Close, "Close Keyboard", tint = KovaPalette.InkSecondary, modifier = Modifier.size(17.dp))
+                Icon(Icons.Rounded.Close, "Close Keyboard", tint = KovaPalette.InkSecondary, modifier = Modifier.size(16.dp))
             }
         }
     }

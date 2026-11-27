@@ -36,7 +36,6 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Memory
-import androidx.compose.material.icons.rounded.Minimize
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
@@ -44,17 +43,13 @@ import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -63,19 +58,28 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kova.workstation.data.model.ClosedWindowRecord
 import com.kova.workstation.data.model.QuickLaunchItem
 import com.kova.workstation.data.model.WindowInfo
 import com.kova.workstation.ui.WorkstationUiState
 import com.kova.workstation.ui.theme.KovaPalette
 
+/**
+ * macOS Mission Control / Glass Collage Workspace Switcher.
+ * Displays open Windows apps in a sleek 2-column frosted-glass collage with specular borders,
+ * aspect-preserved thumbnails, 1-tap Mobile-Fit / Maximize / X-Ray / Close, Recently Closed
+ * reopen, Quick Launch dock, live CPU/RAM/Disk strip, and Clipboard Bridge.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkspaceSwitcherSheet(
@@ -93,11 +97,14 @@ fun WorkspaceSwitcherSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val info = state.systemInfo
+    val glassRim = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.22f), Color.White.copy(alpha = 0.05f)))
+    val glassFill = Brush.verticalGradient(listOf(Color(0xD81A253A), Color(0xE80D1422)))
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface
+        containerColor = Color(0xF20B111E),
+        scrimColor = Color.Black.copy(alpha = 0.52f)
     ) {
         LazyColumn(
             modifier = Modifier
@@ -106,7 +113,7 @@ fun WorkspaceSwitcherSheet(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. Header + Full Desktop Quick Switch
+            // 1. Mission Control Header + Refresh
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -114,63 +121,82 @@ fun WorkspaceSwitcherSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Windows Workspace", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Mission Control",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = KovaPalette.InkPrimary
+                        )
                         Text(
                             text = buildString {
                                 append(info?.hostname?.ifBlank { state.activeProfile?.name.orEmpty() } ?: "Windows Host")
-                                if (info != null) append(" · ${formatUptime(info.uptimeSeconds)}")
+                                if (info != null) append(" · ${info.screen.virtualWidth}×${info.screen.virtualHeight} · ${formatUptime(info.uptimeSeconds)}")
                             },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = KovaPalette.InkSecondary
                         )
                     }
-                    IconButton(onClick = onRefreshWindows) {
-                        if (state.windowsLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = KovaPalette.Cyan)
-                        } else {
-                            Icon(Icons.Rounded.Refresh, contentDescription = "Refresh Windows", tint = KovaPalette.Cyan)
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, glassRim)
+                    ) {
+                        IconButton(onClick = onRefreshWindows, modifier = Modifier.size(38.dp)) {
+                            if (state.windowsLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = KovaPalette.Cyan)
+                            } else {
+                                Icon(Icons.Rounded.Refresh, contentDescription = "Refresh Windows", tint = KovaPalette.Cyan, modifier = Modifier.size(18.dp))
+                            }
                         }
                     }
                 }
             }
 
-            // 2. Full Desktop Banner Option
+            // 2. Full Desktop Glass Hero Tile
             item {
                 val isDesktopActive = state.stageMode == "desktop"
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (isDesktopActive) KovaPalette.Cyan.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant,
-                    border = BorderStroke(1.dp, if (isDesktopActive) KovaPalette.Cyan else MaterialTheme.colorScheme.outline),
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.Transparent,
+                    border = BorderStroke(
+                        width = if (isDesktopActive) 1.5.dp else 1.dp,
+                        brush = if (isDesktopActive) Brush.linearGradient(listOf(KovaPalette.Cyan, KovaPalette.Violet)) else glassRim
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onSelectDesktop() }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        modifier = Modifier
+                            .background(glassFill)
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            Icons.Rounded.DesktopWindows,
-                            contentDescription = null,
-                            tint = if (isDesktopActive) KovaPalette.Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(KovaPalette.Cyan.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.DesktopWindows, null, tint = KovaPalette.Cyan, modifier = Modifier.size(21.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 "Full Windows Desktop",
                                 style = MaterialTheme.typography.titleSmall,
-                                color = if (isDesktopActive) KovaPalette.Cyan else MaterialTheme.colorScheme.onSurface
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isDesktopActive) KovaPalette.Cyan else KovaPalette.InkPrimary
                             )
                             Text(
-                                text = info?.screen?.let { "${it.virtualWidth}×${it.virtualHeight} · All windows & taskbar" }
-                                    ?: "Complete desktop & taskbar",
+                                "All open windows, taskbar & system tray",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = KovaPalette.InkSecondary
                             )
                         }
                         if (isDesktopActive) {
-                            Surface(shape = RoundedCornerShape(8.dp), color = KovaPalette.Cyan.copy(alpha = 0.2f)) {
+                            Surface(shape = RoundedCornerShape(10.dp), color = KovaPalette.Cyan.copy(alpha = 0.18f)) {
                                 Text(
                                     "Active",
                                     style = MaterialTheme.typography.labelSmall,
@@ -183,73 +209,75 @@ fun WorkspaceSwitcherSheet(
                 }
             }
 
-            // 3. Open Windows Strip (Aspect-Preserved Previews + Full Controls)
+            // 3. 2-Column macOS Frosted-Glass Collage of Open Windows
             item {
                 Text(
-                    text = "Open Windows (${state.windows.size})",
+                    text = "Open Windows Collage (${state.windows.size})",
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = KovaPalette.InkSecondary
                 )
             }
 
             if (state.windows.isEmpty()) {
                 item {
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color.Transparent,
+                        border = BorderStroke(1.dp, glassRim)
                     ) {
                         Text(
                             text = "No open desktop windows detected. Launch an app below or switch to Full Desktop.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(14.dp)
+                            color = KovaPalette.InkSecondary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(glassFill)
+                                .padding(16.dp)
                         )
                     }
                 }
             } else {
-                items(state.windows, key = { it.hwnd }) { win ->
-                    val isStaged = state.stageMode == "window" && state.stageHwnd == win.hwnd
-                    SwitcherWindowRow(
-                        window = win,
-                        isStaged = isStaged,
-                        thumbnail = state.windowThumbnails[win.hwnd],
-                        onStage = { onOpenWindow(win.hwnd, false, false) },
-                        onMobileFitToggle = {
-                            if (win.mobileFit) onWindowAction(win.hwnd, "restore_fit")
-                            else onOpenWindow(win.hwnd, true, false)
-                        },
-                        onMaximize = { onWindowAction(win.hwnd, if (win.maximized) "restore" else "maximize") },
-                        onMinimize = { onWindowAction(win.hwnd, if (win.minimized) "restore" else "minimize") },
-                        onXRay = { onOpenWindow(win.hwnd, false, true) },
-                        onClose = { onWindowAction(win.hwnd, "close") }
-                    )
+                val rows = state.windows.chunked(2)
+                items(rows) { pair ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        pair.forEach { win ->
+                            val isStaged = state.stageMode == "window" && state.stageHwnd == win.hwnd
+                            GlassCollageWindowTile(
+                                window = win,
+                                isStaged = isStaged,
+                                thumbnail = state.windowThumbnails[win.hwnd],
+                                onStage = { onOpenWindow(win.hwnd, false, false) },
+                                onMobileFit = {
+                                    if (win.mobileFit) onWindowAction(win.hwnd, "restore_fit")
+                                    else onOpenWindow(win.hwnd, true, false)
+                                },
+                                onMaximize = { onWindowAction(win.hwnd, if (win.maximized) "restore" else "maximize") },
+                                onXRay = { onOpenWindow(win.hwnd, false, true) },
+                                onClose = { onWindowAction(win.hwnd, "close") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (pair.size == 1) {
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
                 }
             }
 
-            // 4. Recently Closed Windows (1-Tap Reopen!)
+            // 4. Recently Closed (1-Tap Reopen)
             if (state.recentlyClosedWindows.isNotEmpty()) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Recently Closed (Tap to Reopen)",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text("Recently Closed", style = MaterialTheme.typography.labelLarge, color = KovaPalette.InkSecondary)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(state.recentlyClosedWindows) { rec ->
                                 AssistChip(
                                     onClick = { onReopenClosed(rec) },
-                                    label = {
-                                        Text(
-                                            rec.title.ifBlank { rec.process }.take(22),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Rounded.History, null, Modifier.size(16.dp), tint = KovaPalette.Amber)
-                                    }
+                                    label = { Text(rec.title.ifBlank { rec.process }.take(22), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    leadingIcon = { Icon(Icons.Rounded.History, null, Modifier.size(16.dp), tint = KovaPalette.Amber) }
                                 )
                             }
                         }
@@ -257,22 +285,27 @@ fun WorkspaceSwitcherSheet(
                 }
             }
 
-            // 5. Quick Launch App Dock
+            // 5. Glass Quick-Launch Dock
             val quickItems = info?.quickLaunch.orEmpty()
             if (quickItems.isNotEmpty()) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Launch Application",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text("Launch App", style = MaterialTheme.typography.labelLarge, color = KovaPalette.InkSecondary)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(quickItems) { app ->
-                                AssistChip(
-                                    onClick = { onLaunchApp(app) },
-                                    label = { Text(app.label, maxLines = 1) },
-                                    leadingIcon = {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = Color.Transparent,
+                                    border = BorderStroke(1.dp, glassRim),
+                                    modifier = Modifier.clickable { onLaunchApp(app) }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .background(glassFill)
+                                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
                                         Icon(
                                             imageVector = when (app.icon) {
                                                 "terminal" -> Icons.Rounded.Terminal
@@ -287,22 +320,23 @@ fun WorkspaceSwitcherSheet(
                                             modifier = Modifier.size(16.dp),
                                             tint = KovaPalette.Cyan
                                         )
+                                        Text(app.label, style = MaterialTheme.typography.labelMedium, color = KovaPalette.InkPrimary, maxLines = 1)
                                     }
-                                )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // 6. Compact Live Host Telemetry Strip
+            // 6. Glass Telemetry Strip
             item {
                 val disk = info?.disks?.firstOrNull()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    CompactMetricTile(
+                    GlassMetricTile(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Rounded.Speed,
                         label = "CPU",
@@ -310,7 +344,7 @@ fun WorkspaceSwitcherSheet(
                         fraction = ((info?.cpuPercent ?: 0.0) / 100.0).toFloat(),
                         tint = KovaPalette.Cyan
                     )
-                    CompactMetricTile(
+                    GlassMetricTile(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Rounded.Memory,
                         label = "RAM",
@@ -318,7 +352,7 @@ fun WorkspaceSwitcherSheet(
                         fraction = ((info?.memory?.percent ?: 0.0) / 100.0).toFloat(),
                         tint = KovaPalette.Violet
                     )
-                    CompactMetricTile(
+                    GlassMetricTile(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Rounded.Storage,
                         label = disk?.drive?.removeSuffix("\\") ?: "C:",
@@ -329,20 +363,26 @@ fun WorkspaceSwitcherSheet(
                 }
             }
 
-            // 7. Bi-Directional Clipboard Bridge
+            // 7. Glass Clipboard Bridge
             item {
-                Card(
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color.Transparent,
+                    border = BorderStroke(1.dp, glassRim)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(glassFill)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Clipboard Bridge", style = MaterialTheme.typography.titleSmall)
+                            Text("Clipboard Bridge", style = MaterialTheme.typography.titleSmall, color = KovaPalette.InkPrimary)
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 AssistChip(
                                     onClick = onPushClipboard,
@@ -360,17 +400,17 @@ fun WorkspaceSwitcherSheet(
                         Text(
                             text = preview.take(180),
                             style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = KovaPalette.InkSecondary,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surface)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.Black.copy(alpha = 0.28f))
                                 .clickable {
                                     if (state.windowsClipboardText.isNotBlank()) onCopyClipboard(state.windowsClipboardText)
                                 }
-                                .padding(8.dp)
+                                .padding(9.dp)
                         )
                     }
                 }
@@ -380,181 +420,221 @@ fun WorkspaceSwitcherSheet(
 }
 
 @Composable
-private fun SwitcherWindowRow(
+private fun GlassCollageWindowTile(
     window: WindowInfo,
     isStaged: Boolean,
     thumbnail: android.graphics.Bitmap?,
     onStage: () -> Unit,
-    onMobileFitToggle: () -> Unit,
+    onMobileFit: () -> Unit,
     onMaximize: () -> Unit,
-    onMinimize: () -> Unit,
     onXRay: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isStaged) KovaPalette.Cyan.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant
-        ),
-        border = BorderStroke(
-            width = if (isStaged) 1.5.dp else 1.dp,
-            color = if (isStaged) KovaPalette.Cyan else MaterialTheme.colorScheme.outline
+    val rimBrush = if (isStaged) {
+        Brush.linearGradient(listOf(KovaPalette.Cyan, KovaPalette.Violet))
+    } else {
+        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.20f), Color.White.copy(alpha = 0.05f)))
+    }
+    val cardFill = Brush.verticalGradient(
+        listOf(
+            if (isStaged) Color(0xE01A2C47) else Color(0xD8152033),
+            Color(0xEB0B121F)
         )
+    )
+
+    Surface(
+        modifier = modifier.clickable { onStage() },
+        shape = RoundedCornerShape(18.dp),
+        color = Color.Transparent,
+        border = BorderStroke(if (isStaged) 1.5.dp else 1.dp, rimBrush),
+        shadowElevation = 6.dp
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            modifier = Modifier
+                .background(cardFill)
+                .padding(9.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            // macOS traffic-light-inspired header row with close dot
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onStage() },
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Aspect-preserved thumbnail box (never stretches or distorts!)
-                Box(
-                    modifier = Modifier
-                        .width(84.dp)
-                        .aspectRatio(16f / 10f)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.Black),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (thumbnail != null) {
-                        val imgBmp = remember(thumbnail) { thumbnail.asImageBitmap() }
-                        Image(
-                            bitmap = imgBmp,
-                            contentDescription = window.title,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Icon(
-                            Icons.Rounded.DesktopWindows,
-                            contentDescription = null,
-                            tint = KovaPalette.InkMuted,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when {
-                                        isStaged -> KovaPalette.Cyan
-                                        window.focused -> KovaPalette.Emerald
-                                        window.minimized -> KovaPalette.InkMuted
-                                        else -> KovaPalette.Amber
-                                    }
-                                )
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = window.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when {
+                                    isStaged -> KovaPalette.Cyan
+                                    window.focused -> KovaPalette.Emerald
+                                    window.minimized -> KovaPalette.InkMuted
+                                    else -> KovaPalette.Amber
+                                }
+                            )
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        text = buildString {
-                            append(window.process.removeSuffix(".exe"))
-                            append(" · ${window.width}×${window.height}")
-                            if (window.minimized) append(" · Minimized")
-                            else if (window.mobileFit) append(" · Mobile-Fit")
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (window.mobileFit) KovaPalette.Emerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = window.title,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = KovaPalette.InkPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                IconButton(onClick = onMinimize, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Rounded.Minimize, "Minimize/Restore", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-                }
-                IconButton(onClick = onMaximize, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Rounded.CropSquare, "Maximize/Restore", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-                }
-                IconButton(onClick = onClose, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Rounded.Close, "Close Window", tint = KovaPalette.Rose, modifier = Modifier.size(17.dp))
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(KovaPalette.Rose.copy(alpha = 0.16f))
+                        .clickable { onClose() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Close, "Close Window", tint = KovaPalette.Rose, modifier = Modifier.size(13.dp))
                 }
             }
 
+            // Aspect-preserved glass preview pane (zero squishing!)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 11f)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(Color(0xFF060A12)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (thumbnail != null) {
+                    val imgBmp = remember(thumbnail) { thumbnail.asImageBitmap() }
+                    Image(
+                        bitmap = imgBmp,
+                        contentDescription = window.title,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(Icons.Rounded.DesktopWindows, null, tint = KovaPalette.InkMuted, modifier = Modifier.size(26.dp))
+                }
+
+                // Subtle bottom-left resolution tag
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color.Black.copy(alpha = 0.62f),
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(5.dp)
+                ) {
+                    Text(
+                        text = "${window.width}×${window.height}",
+                        fontSize = 9.sp,
+                        color = Color(0xFFD0DCEB),
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                    )
+                }
+            }
+
+            // Compact frosted icon action bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                FilledTonalButton(
-                    onClick = onStage,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Text(if (isStaged) "Viewing" else "Focus", maxLines = 1)
-                }
-                FilledTonalButton(
-                    onClick = onMobileFitToggle,
-                    modifier = Modifier.weight(1.25f),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Icon(Icons.Rounded.PhoneAndroid, null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (window.mobileFit) "Restore Size" else "Mobile-Fit", maxLines = 1)
-                }
-                OutlinedButton(
+                CollageMiniAction(
+                    icon = Icons.Rounded.PhoneAndroid,
+                    label = if (window.mobileFit) "Fit" else "Phone",
+                    tint = if (window.mobileFit) KovaPalette.Emerald else KovaPalette.Cyan,
+                    onClick = onMobileFit,
+                    modifier = Modifier.weight(1.25f)
+                )
+                CollageMiniAction(
+                    icon = Icons.Rounded.CropSquare,
+                    label = "",
+                    tint = KovaPalette.InkSecondary,
+                    onClick = onMaximize,
+                    modifier = Modifier.weight(0.7f)
+                )
+                CollageMiniAction(
+                    icon = Icons.Rounded.CenterFocusStrong,
+                    label = "",
+                    tint = KovaPalette.Amber,
                     onClick = onXRay,
-                    modifier = Modifier.weight(0.95f),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Icon(Icons.Rounded.CenterFocusStrong, null, Modifier.size(14.dp), tint = KovaPalette.Amber)
-                    Spacer(Modifier.width(4.dp))
-                    Text("X-Ray", maxLines = 1)
-                }
+                    modifier = Modifier.weight(0.7f)
+                )
             }
         }
     }
 }
 
 @Composable
-private fun CompactMetricTile(
+private fun CollageMiniAction(
+    icon: ImageVector,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(9.dp),
+        color = Color.White.copy(alpha = 0.08f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(13.dp))
+            if (label.isNotEmpty()) {
+                Spacer(Modifier.width(3.dp))
+                Text(label, fontSize = 10.sp, color = tint, maxLines = 1, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GlassMetricTile(
     modifier: Modifier,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     label: String,
     value: String,
     fraction: Float,
     tint: Color
 ) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(9.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+    val rimBrush = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.18f), Color.White.copy(alpha = 0.04f)))
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xC8141E30),
+        border = BorderStroke(1.dp, rimBrush)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(9.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(icon, null, tint = tint, modifier = Modifier.size(13.dp))
-                Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(icon, null, tint = tint, modifier = Modifier.size(13.dp))
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = KovaPalette.InkSecondary)
+                }
+                Text(value, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = KovaPalette.InkPrimary)
             }
-            Text(value, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            LinearProgressIndicator(
+                progress = { fraction.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = tint,
+                trackColor = tint.copy(alpha = 0.16f)
+            )
         }
-        LinearProgressIndicator(
-            progress = { fraction.coerceIn(0f, 1f) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(3.dp)
-                .clip(RoundedCornerShape(3.dp)),
-            color = tint,
-            trackColor = tint.copy(alpha = 0.16f)
-        )
     }
 }
 
